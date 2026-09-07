@@ -177,17 +177,25 @@ def trade_rows(plan: Plan) -> list[dict]:
     ]
 
 
-def sell_lot_rows(plan: Plan, cfg: TaxConfig) -> list[dict]:
-    """The sell leg, lot by lot. Gains are signed: a loss is negative.
+def tax_per_share(gain: float, bucket: str, cfg: TaxConfig) -> str:
+    """What one share of this lot does to the bill, at statutory rates.
 
-    `Tax / share` charges each lot its statutory rate. That is the number a
-    ranking rule sorts on, and it is not what the lot actually costs: the rate
-    that applies depends on the exemption and the losses set off elsewhere.
+    A short-term loss has two answers, so it gets both: it saves 20% against
+    short-term gain, and only 12.5% on whatever spills to the long-term side
+    once that gain runs out. Which one applies is decided by the rest of the
+    plan, which is exactly what a per-lot ranking cannot see.
     """
+    if bucket == "ST" and gain < 0:
+        return f"{gain * cfg.stcg_rate:,.2f} / {gain * cfg.ltcg_rate:,.2f}"
+    rate = cfg.stcg_rate if bucket == "ST" else cfg.ltcg_rate
+    return f"{gain * rate:,.2f}"
+
+
+def sell_lot_rows(plan: Plan, cfg: TaxConfig) -> list[dict]:
+    """The sell leg, lot by lot. Gains are signed: a loss is negative."""
     rows = []
     for s in plan.lot_sales:
         bucket = "LT" if s.classification.startswith("LT") else "ST"
-        rate = cfg.ltcg_rate if bucket == "LT" else cfg.stcg_rate
         rows.append(
             {
                 "Lot": s.lot_id,
@@ -196,9 +204,8 @@ def sell_lot_rows(plan: Plan, cfg: TaxConfig) -> list[dict]:
                 "Shares to sell": s.shares_sold,
                 "Of lot": s.lot_quantity,
                 "Left": s.remaining_shares,
-                "Buy price": s.cost_basis_per_share,
-                "Gain / share": s.gain_per_share,
-                "Tax / share": s.gain_per_share * rate,
+                "Gain per share": s.gain_per_share,
+                "Tax per share": tax_per_share(s.gain_per_share, bucket, cfg),
                 "Gain to realise": s.realized_gain,
             }
         )
@@ -355,8 +362,11 @@ def render_plan(plan: Plan, cfg: TaxConfig) -> None:
         st.markdown("#### Lot-level sell plan")
         st.caption(
             "🟢 LT long-term, 🟠 ST short-term. Gains are signed, so a loss is "
-            "negative. **Tax / share** charges each lot its statutory rate — the "
-            "number a ranking rule sorts on, and not what the lot actually costs."
+            "negative and a negative tax is a saving. **Tax per share** uses "
+            "statutory rates — the number a ranking rule sorts on, not what the "
+            "lot actually costs. A short-term loss carries two: what it saves "
+            "against short-term gain, and the 12.5% it drops to once that gain "
+            "runs out."
         )
         st.dataframe(sell_lot_rows(plan, cfg), hide_index=True)
 
