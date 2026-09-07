@@ -1,0 +1,21 @@
+# Dependencies for the pip path. Python 3.11 or newer.
+#
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Versions mirror uv.lock. If you have uv, `uv sync` is faster and needs no
+# manual virtualenv.
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+python-multipart==0.0.32
+
+numpy==2.4.6 ; python_version < "3.12"
+numpy==2.5.3 ; python_version >= "3.12"
+scipy==1.17.1 ; python_version < "3.12"
+scipy==1.18.1 ; python_version >= "3.12"
+
+# Running the tests
+pytest==9.1.1
+httpx==0.28.1

@@ -6,14 +6,25 @@ small as it can be. Lot selection is solved as a linear program with whole-numbe
 variables, so the answer comes back proved optimal — not scored, not ranked, not
 filled oldest-first.
 
+**Python 3.11 or newer.** Either path works — pick whichever you have.
+
 ```bash
+# with uv
 uv sync
 uv run uvicorn app.api:app
+
+# without uv — plain venv and pip
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.api:app
 ```
 
 - Swagger: <http://127.0.0.1:8000/docs>
 - **The required edge case, no input needed:** <http://127.0.0.1:8000/demo/edge_case>
-- Tests: `uv run pytest`
+- Tests: `uv run pytest`, or just `pytest` inside the activated venv
+
+Nothing is installed as a package and there is no build step — both paths only
+install dependencies, and the app is imported from the repo root.
 
 ---
 
@@ -259,7 +270,7 @@ long-term lot and wastes the loss entirely.
 ## Tests
 
 ```bash
-uv run pytest
+uv run pytest     # or: pytest
 ```
 
 | file | covers |
@@ -332,4 +343,5 @@ app/
   api.py         FastAPI routes; the only way in
 samples/         four scenarios, three CSVs each
 tests/           test_tax, test_optimizer, test_engine, test_api, bruteforce
+requirements.txt pinned dependencies for the pip path; mirrors uv.lock
 ```
