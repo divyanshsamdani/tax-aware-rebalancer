@@ -1,0 +1,3 @@
+lot_id,ticker,buy_date,quantity,buy_price
+LARGE-1,LARGE,2022-01-10,100,600
+SMALL-1,SMALL,2023-07-20,300,450

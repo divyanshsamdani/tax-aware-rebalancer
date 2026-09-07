@@ -1,0 +1,4 @@
+lot_id,ticker,buy_date,quantity,buy_price
+L1,ACME,2023-02-10,60,800
+L2,ACME,2026-04-01,40,950
+N1,NOVA,2022-08-15,100,200

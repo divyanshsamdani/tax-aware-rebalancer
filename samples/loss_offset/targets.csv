@@ -1,0 +1,4 @@
+ticker,target_weight_pct
+GAINCO,20
+LOSSCO,30
+STEADY,50

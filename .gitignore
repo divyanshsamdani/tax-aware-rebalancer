@@ -1,0 +1,8 @@
+.claude/
+CLAUDE.md
+.DS_Store
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+assignment.pdf
