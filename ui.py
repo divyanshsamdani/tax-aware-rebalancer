@@ -19,7 +19,7 @@ from app import ingest
 from app import tax as taxrules
 from app.api import DEMO_SALE_DATE, SAMPLES
 from app.engine import Engine
-from app.models import Plan
+from app.models import Plan, TaxConfig
 
 SCENARIOS = {
     "edge_case": "The required edge case: 75 shares must go, which empties the "
@@ -112,6 +112,11 @@ def holding_cell(bucket: str) -> str:
     return f"{marker(bucket)} {'Long-term' if bucket == 'LT' else 'Short-term'}"
 
 
+def term_cell(bucket: str) -> str:
+    """The dense form, for tables that are already carrying a lot of numbers."""
+    return f"{marker(bucket)} {bucket}"
+
+
 def holdings_rows(engine: Engine) -> list[dict]:
     rows = []
     for lot in engine.lots:
@@ -172,24 +177,32 @@ def trade_rows(plan: Plan) -> list[dict]:
     ]
 
 
-def sell_lot_rows(plan: Plan) -> list[dict]:
-    """The sell leg, lot by lot. Gains are signed: a loss is negative."""
-    return [
-        {
-            "Lot": s.lot_id,
-            "Ticker": s.ticker,
-            "Buy date": str(s.buy_date),
-            "Holding": holding_cell("LT" if s.classification.startswith("LT") else "ST"),
-            "Held": s.holding,
-            "Shares to sell": s.shares_sold,
-            "Of lot": s.lot_quantity,
-            "Left": s.remaining_shares,
-            "Buy price": s.cost_basis_per_share,
-            "Gain / share": s.gain_per_share,
-            "Gain to realise": s.realized_gain,
-        }
-        for s in plan.lot_sales
-    ]
+def sell_lot_rows(plan: Plan, cfg: TaxConfig) -> list[dict]:
+    """The sell leg, lot by lot. Gains are signed: a loss is negative.
+
+    `Tax / share` charges each lot its statutory rate. That is the number a
+    ranking rule sorts on, and it is not what the lot actually costs: the rate
+    that applies depends on the exemption and the losses set off elsewhere.
+    """
+    rows = []
+    for s in plan.lot_sales:
+        bucket = "LT" if s.classification.startswith("LT") else "ST"
+        rate = cfg.ltcg_rate if bucket == "LT" else cfg.stcg_rate
+        rows.append(
+            {
+                "Lot": s.lot_id,
+                "Ticker": s.ticker,
+                "Term": term_cell(bucket),
+                "Shares to sell": s.shares_sold,
+                "Of lot": s.lot_quantity,
+                "Left": s.remaining_shares,
+                "Buy price": s.cost_basis_per_share,
+                "Gain / share": s.gain_per_share,
+                "Tax / share": s.gain_per_share * rate,
+                "Gain to realise": s.realized_gain,
+            }
+        )
+    return rows
 
 
 def inject_card_css(shades: dict[str, str], selected: str) -> None:
@@ -326,22 +339,26 @@ def render_cards(plans: dict[str, Plan]) -> str:
     return st.session_state["plan"]
 
 
-def render_plan(plan: Plan) -> None:
+def render_plan(plan: Plan, cfg: TaxConfig) -> None:
     if plan.certified_optimal:
         st.info(METHOD_NOTE[plan.method], icon="🧮")
     else:
         st.warning(METHOD_NOTE[plan.method], icon="⚠️")
 
-    st.markdown("**Trades**")
+    st.markdown("#### Ticker-level trade plan")
     if plan.trades:
         st.dataframe(trade_rows(plan), hide_index=True)
     else:
         st.info("No trades — every ticker is already at its target weight.")
 
     if plan.lot_sales:
-        st.markdown("**The sell leg, lot by lot**")
-        st.caption("Gains are signed: a loss is negative.")
-        st.dataframe(sell_lot_rows(plan), hide_index=True)
+        st.markdown("#### Lot-level sell plan")
+        st.caption(
+            "🟢 LT long-term, 🟠 ST short-term. Gains are signed, so a loss is "
+            "negative. **Tax / share** charges each lot its statutory rate — the "
+            "number a ranking rule sorts on, and not what the lot actually costs."
+        )
+        st.dataframe(sell_lot_rows(plan, cfg), hide_index=True)
 
         net_st, net_lt = net_gains(plan)
         totals = st.columns(2)
@@ -353,7 +370,7 @@ def render_plan(plan: Plan) -> None:
             "what makes the choice of lots a linear program rather than a search."
         )
 
-        st.markdown("**Why these lots**")
+        st.markdown("#### Why these lots")
         for sale in plan.lot_sales:
             with st.container(border=True):
                 st.markdown(
@@ -391,7 +408,7 @@ def render_plan(plan: Plan) -> None:
                             "label. Nothing negative means nothing cheaper exists."
                         )
 
-    st.markdown("**Weights after this plan**")
+    st.markdown("#### Weights after this plan")
     st.dataframe(
         [
             {
@@ -447,7 +464,7 @@ def main() -> None:
     st.divider()
     selected = render_cards(plans)
     st.divider()
-    render_plan(plans[selected])
+    render_plan(plans[selected], engine.cfg)
 
 
 if __name__ == "__main__":

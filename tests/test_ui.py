@@ -8,8 +8,10 @@ from datetime import date
 
 import ui
 from app.api import DEMO_SALE_DATE, SAMPLES
+from app.models import TaxConfig
 
 EDGE = date(2026, 9, 6)
+CFG = TaxConfig()
 
 
 def read(name: str) -> bytes:
@@ -74,13 +76,33 @@ def test_trades_table_is_one_row_per_ticker():
 
 
 def test_the_sell_leg_is_broken_out_lot_by_lot_with_signed_gains():
-    rows = ui.sell_lot_rows(plan())
+    rows = ui.sell_lot_rows(plan(), CFG)
     assert [r["Lot"] for r in rows] == ["L1", "L2"]
     assert sum(r["Shares to sell"] for r in rows) == 75
     assert rows[0]["Gain / share"] == 200.0 and rows[1]["Left"] == 25
-    assert rows[0]["Holding"].startswith("🟢") and rows[1]["Holding"].startswith("🟠")
+    assert (rows[0]["Term"], rows[1]["Term"]) == ("🟢 LT", "🟠 ST")
     # The lot's own cost basis, named the same as it is in the holdings table.
     assert rows[0]["Buy price"] == 800.0
+
+
+def test_the_sell_plan_drops_the_columns_the_holdings_table_already_carries():
+    assert set(ui.sell_lot_rows(plan(), CFG)[0]).isdisjoint({"Buy date", "Held"})
+
+
+def test_tax_per_share_is_the_statutory_rate_and_is_what_ltfo_sorts_on():
+    """It is also the wrong number, which is the point: on edge_case the
+    long-term lot looks dearer per share and is in fact free."""
+    rows = {r["Lot"]: r for r in ui.sell_lot_rows(plan(), CFG)}
+    assert rows["L1"]["Tax / share"] == 200.0 * CFG.ltcg_rate   # 25.0
+    assert rows["L2"]["Tax / share"] == 50.0 * CFG.stcg_rate    # 10.0
+    # LTFO sorts on exactly this and therefore reaches for L2 first.
+    assert rows["L2"]["Tax / share"] < rows["L1"]["Tax / share"]
+    assert plan("edge_case", "ltfo").summary.total_tax > plan().summary.total_tax
+
+
+def test_tax_per_share_is_negative_on_a_loss_lot():
+    rows = ui.sell_lot_rows(plan("loss_offset"), CFG)
+    assert any(r["Tax / share"] < 0 for r in rows)
 
 
 def test_net_gains_are_the_two_numbers_the_tax_depends_on():
@@ -97,7 +119,7 @@ def test_net_gains_go_negative_when_losses_outweigh_gains():
 
 
 def test_a_loss_lot_carries_a_negative_gain_per_share():
-    rows = ui.sell_lot_rows(plan("loss_offset"))
+    rows = ui.sell_lot_rows(plan("loss_offset"), CFG)
     assert any(r["Gain / share"] < 0 for r in rows)
 
 
