@@ -6,25 +6,37 @@ small as it can be. Lot selection is solved as a linear program with whole-numbe
 variables, so the answer comes back proved optimal — not scored, not ranked, not
 filled oldest-first.
 
-**Python 3.11 or newer.** Either path works — pick whichever you have.
+**Python 3.11 or newer.** Install with either tool, then pick a way in.
 
 ```bash
-# with uv
-uv sync
-uv run uvicorn app.api:app
+uv sync                                     # with uv
 
-# without uv — plain venv and pip
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # without uv
 pip install -r requirements.txt
-uvicorn app.api:app
+```
+
+**The UI** — one command, nothing else to start:
+
+```bash
+uv run streamlit run ui.py        # or, in the activated venv: streamlit run ui.py
+```
+
+Opens on <http://localhost:8501>. `edge_case` is selected in the sidebar by
+default — that is the scenario the brief requires. Or upload your own CSVs.
+
+**The API**:
+
+```bash
+uv run uvicorn app.api:app        # or: uvicorn app.api:app
 ```
 
 - Swagger: <http://127.0.0.1:8000/docs>
 - **The required edge case, no input needed:** <http://127.0.0.1:8000/demo/edge_case>
-- Tests: `uv run pytest`, or just `pytest` inside the activated venv
+
+**Tests**: `uv run pytest`, or just `pytest` inside the activated venv.
 
 Nothing is installed as a package and there is no build step — both paths only
-install dependencies, and the app is imported from the repo root.
+install dependencies, and everything is imported from the repo root.
 
 ---
 
@@ -202,6 +214,32 @@ and the three tests after it.
 
 ---
 
+## The UI
+
+```bash
+streamlit run ui.py
+```
+
+One file, `ui.py`, and deliberately thin: it collects input, calls `Engine`, and
+renders what comes back. It computes nothing of its own, so there is no second
+implementation that could drift away from the API.
+
+- **Portfolio** — a bundled scenario, or upload `lots.csv`, `prices.csv` and
+  `targets.csv`. Bad input surfaces the engine's own message, naming the file,
+  the row and the offending value.
+- **Lot selection** — tax-minimising or oldest-first, plus a toggle for the FIFO
+  comparison. Switching to oldest-first replaces the "proved optimal" badge with
+  a warning, because that plan carries no such claim.
+- Every sold lot gets a card: how much of it went, the gain, what the next rupee
+  of gain costs, the engine's own sentence, and an expander pricing what each
+  other lot would have cost instead. Lots left partly intact say so, with the
+  buy date that is being preserved.
+
+The UI calls the engine directly rather than over HTTP, so there is only one
+process to start. The API is the programmatic way in.
+
+---
+
 ## Endpoints
 
 | | path | |
@@ -279,6 +317,7 @@ uv run pytest     # or: pytest
 | `test_optimizer.py` | the solver against an exhaustive search on 240 random portfolios, plus the counterexamples that rule out simpler rules |
 | `test_engine.py` | the three cases the brief requires, rebalancing mechanics, validation, CSV parsing |
 | `test_api.py` | every endpoint, both input paths, the error contract |
+| `test_ui.py` | the front end's data path: both input sources, the method selector, bad uploads |
 
 The three the brief asks for are the first three sections of `test_engine.py`:
 the partial-lot edge case, a straightforward all-long-term rebalance, and a
@@ -340,8 +379,9 @@ app/
   explain.py     per-lot reasoning, priced by re-running the tax calculation
   engine.py      orchestration; implements no tax rule of its own
   ingest.py      CSV parsing
-  api.py         FastAPI routes; the only way in
+  api.py         FastAPI routes
+ui.py            Streamlit front end; renders the plan, computes nothing
 samples/         four scenarios, three CSVs each
-tests/           test_tax, test_optimizer, test_engine, test_api, bruteforce
+tests/           test_tax, test_optimizer, test_engine, test_api, test_ui, bruteforce
 requirements.txt pinned dependencies for the pip path; mirrors uv.lock
 ```
