@@ -94,7 +94,7 @@ class Engine:
         self._cached = _Setup(positions, total_value, requirements, priced)
         return self._cached
 
-    def run(self, method: Method = "exact", compare: bool = True) -> Plan:
+    def run(self, method: Method = "optimal", compare: bool = True) -> Plan:
         s = self._setup()
         allocation = optimizer.solve(s.priced, s.requirements, self.cfg, method)
 
@@ -178,9 +178,9 @@ class Engine:
             ]
 
         lines = [
-            f"Sold {plan.summary.shares_sold} share(s) from {len(plan.lot_sales)} "
-            f"lot(s) for Rs {plan.summary.gross_proceeds:,.2f} and bought "
-            f"{plan.summary.shares_bought} share(s) back. "
+            f"Sell {plan.summary.shares_sold} share(s) from {len(plan.lot_sales)} "
+            f"lot(s) for Rs {plan.summary.gross_proceeds:,.2f} and buy back "
+            f"{plan.summary.shares_bought} share(s). "
             f"Tax on this plan: Rs {breakdown.total_tax:,.2f}.",
             self._comparison_line(plan),
             explain.setoff_summary(breakdown, self.cfg),
@@ -193,7 +193,7 @@ class Engine:
                 "reinvested. That is why the closing weights sit a fraction under "
                 "target."
             )
-        if plan.method != "exact":
+        if plan.method != "optimal":
             lines.append(
                 f"Lot selection used the '{plan.method}' baseline rather than the "
                 "tax-minimising solver, so this plan is not claimed to be cheapest."

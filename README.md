@@ -199,12 +199,12 @@ them correctly.
 
 The reasoning the engine emits for L1:
 
-> ACME: sold 60 of 60 shares from the lot bought 2023-02-10 — 42 months held,
+> ACME: sell 60 of 60 shares from the lot bought 2023-02-10 — 42 months held,
 > long-term, LTCG. Cost ₹800.00/share against ₹1,000.00 today, so a gain of
 > ₹200.00/share, ₹12,000.00 in all. One more rupee of long-term gain would cost
 > 0.00%, because the ₹1,25,000 long-term exemption is not yet used up.
 > **Selling 25 share(s) from lot L2 instead (bought 2026-04-01, STCG, gain of
-> ₹50.00/share) would have cost ₹250.00 more in tax.**
+> ₹50.00/share) would cost ₹250.00 more in tax.**
 
 That ₹250 is the tax function re-evaluated on the swap, not a label.
 
@@ -227,13 +227,20 @@ implementation that could drift away from the API.
 - **Portfolio** — a bundled scenario, or upload `lots.csv`, `prices.csv` and
   `targets.csv`. Bad input surfaces the engine's own message, naming the file,
   the row and the offending value.
-- **Lot selection** — tax-minimising or oldest-first, plus a toggle for the FIFO
-  comparison. Switching to oldest-first replaces the "proved optimal" badge with
-  a warning, because that plan carries no such claim.
-- Every sold lot gets a card: how much of it went, the gain, what the next rupee
-  of gain costs, the engine's own sentence, and an expander pricing what each
-  other lot would have cost instead. Lots left partly intact say so, with the
-  buy date that is being preserved.
+- It opens on nothing but the rates and the choice of input. Pick a scenario or
+  upload three CSVs and the page fills in.
+- **The portfolio comes first**: every lot with its own buy date and cost basis,
+  marked 🟢 long-term or 🟠 short-term as at the trade date. Then the shares that
+  must leave each ticker — fixed by price and target alone, so it is the same
+  whichever lots supply them.
+- **The three plans are the navigation.** Their tax sits side by side in three
+  cards and clicking one opens it. Only `optimal` is green: the colour marks the
+  plan that carries a guarantee, not the one that happens to win on this input.
+  FIFO ties the optimum on `edge_case` and stays red, because it cannot tell you
+  it has tied.
+- Inside a plan: the trades one row per ticker, then the sell leg broken out lot
+  by lot with signed gains, then the engine's own sentence for each lot. Lots
+  left partly intact say so, naming the buy date being preserved.
 
 The UI calls the engine directly rather than over HTTP, so there is only one
 process to start. The API is the programmatic way in.
@@ -273,29 +280,102 @@ reasoning; per-ticker buy/sell instructions; a per-lot breakdown of the sells,
 each with its own reasoning and priced alternatives; the full set-off
 calculation; and the target, before and after weights.
 
-### The FIFO comparison (the optional toggle)
+### The three lot-selection methods
 
-`compare_with_fifo` is on by default. It runs the same sell requirements through
-oldest-lot-first as well, and reports both figures plus the saving. Selling
-oldest-first is the right baseline because it is what actually happens by
-default for shares held in a demat account, so the gap is what picking lots is
-worth.
+`method` picks one. Only the first claims to be cheapest; the other two come
+back with `certified_optimal: false`.
 
-The comparison is also stated in words, because a bare saving of zero reads as
-"picking lots achieved nothing" when it usually means FIFO happened to be
-optimal here and the engine proved it.
+| `method` | rule |
+|---|---|
+| `optimal` | the linear program above, solved over every lot at once |
+| `fifo` | oldest lot first — what a demat account does by default |
+| `ltfo` | least tax first out: within each ticker, the lot with the smallest `gain_per_share × statutory rate` goes first |
 
-`method=fifo` produces the plan that way instead; it comes back with
-`certified_optimal: false`.
+`ltfo` is there because it is the rule a reader is most likely to reach for
+instead of a solver, and it is worth being able to price that instinct. It
+ranks each lot in isolation, so it cannot see that the ₹1,25,000 exemption is a
+single pool shared across the portfolio — and on the required edge case that
+costs it ₹250:
+
+| | `optimal` | `ltfo` | `fifo` |
+|---|---|---|---|
+| `edge_case` | **₹150** | ₹400 | ₹150 |
+| `exemption_split` | **₹80** | ₹1,600 | ₹5,625 |
+| `exemption_vs_loss` | **₹8,400** | ₹12,000 | ₹21,375 |
+| `loss_priority` | **₹14,700** | ₹16,125 | ₹16,175 |
+| `loss_offset` | **₹4,000** | ₹4,000 | ₹20,000 |
+| `all_ltcg` | **₹0** | ₹0 | ₹43,437.50 |
+| `at_target` | ₹0 | ₹0 | ₹0 |
+
+Neither shortcut is safe. `fifo` is beaten badly on three of the five, which is
+unsurprising — it makes no tax decision at all, so whatever it costs is a
+coincidence. `ltfo` is the interesting one: it *does* rank on tax, and it still
+loses on the very edge case the brief specifies. It sees a short-term lot
+gaining ₹50/share (₹10 of tax at 20%) against a long-term lot gaining
+₹200/share (₹25 at 12.5%), so it empties the short-term lot first — never
+noticing the long-term gain was free, because the exemption had not been
+touched. Charging each lot its statutory rate is the whole mistake: the rate
+that actually applies depends on the rest of the portfolio.
+
+`compare_with_fifo` additionally reports the FIFO figure and the saving
+alongside whichever plan was asked for. It is stated in words as well as
+numbers, because a bare saving of zero reads as "picking lots achieved nothing"
+when it usually means FIFO happened to be optimal and the engine proved it.
 
 ### Bundled scenarios
 
-| scenario | shows | tax | oldest-first |
-|---|---|---|---|
-| `edge_case` | the required 60/40 partial-lot split | ₹150 | ₹150 |
-| `all_ltcg` | a plain long-term rebalance | ₹0 | ₹43,437.50 |
-| `at_target` | already at target, nothing to do | ₹0 | ₹0 |
-| `loss_offset` | a short-term loss sheltering a gain elsewhere | ₹4,000 | ₹20,000 |
+| scenario | shows | `optimal` | `ltfo` | `fifo` |
+|---|---|---|---|---|
+| `edge_case` | the required 60/40 partial-lot split | **₹150** | ₹400 | ₹150 |
+| `exemption_split` | all three disagree; the best answer stops part-way through a lot | **₹80** | ₹1,600 | ₹5,625 |
+| `exemption_vs_loss` | a long-term loss spent only down to the exemption line | **₹8,400** | ₹12,000 | ₹21,375 |
+| `loss_priority` | which of two losses is worth more, and when that flips | **₹14,700** | ₹16,125 | ₹16,175 |
+| `loss_offset` | a short-term loss sheltering a gain elsewhere | **₹4,000** | ₹4,000 | ₹20,000 |
+| `all_ltcg` | a plain long-term rebalance | **₹0** | ₹0 | ₹43,437.50 |
+| `at_target` | already at target, nothing to do | ₹0 | ₹0 | ₹0 |
+
+#### Where the splits come from
+
+The tax function has two kinks, and each one is a place where the right answer
+stops part-way through a lot. Both scenarios below sell **100 shares of
+HARVEST**; the only question is which lots supply them.
+
+**`exemption_vs_loss` — a loss spent on gain the exemption already covers is
+wasted.** GAINCO is sold off entirely, leaving ₹1,80,000 of long-term gain,
+₹55,000 of it above the exemption. HARVEST offers a long-term loss of
+₹1,000/share and a short-term loss of ₹400/share.
+
+Per share the long-term loss saves ₹125 (12.5% of ₹1,000) against the
+short-term loss's ₹80 (20% of ₹400), so it goes first — and `ltfo` ranks it
+first for exactly that reason. But it is only worth ₹125 a share **while there
+is long-term gain above the exemption to cancel**. That runs out after 55
+shares, and every share after that saves nothing at all. The plan takes 55 from
+the long-term lot, landing net long-term gain on ₹1,25,000 exactly, and the
+remaining 45 short-term. `ltfo` takes all 100 and throws 45 shares of loss away.
+
+**`loss_priority` — the more valuable loss stops being the more valuable one.**
+GAINCO leaves ₹34,000 of short-term gain and ₹3,00,000 of long-term. HARVEST
+offers a short-term loss of ₹800/share and a long-term loss of ₹1,000/share.
+
+The short-term loss saves ₹160 a share (20% of ₹800) against ₹125 for the
+long-term one, so it goes first, and again `ltfo` gets that right. But it only
+saves 20% while there is short-term gain left to cancel. After 43 shares that
+gain is gone, the surplus carries to the long-term side at 12.5%, and ₹800 at
+12.5% (₹100) is now worth less than the long-term lot's ₹1,000 at 12.5%
+(₹125). So the priority flips and the plan takes the last 57 shares long-term.
+
+Both times the ranking rule picks the right lot to start from and has no way to
+know when to stop. The stopping point is not a property of the lot — it is the
+point where the rest of the portfolio changes what the lot is worth.
+
+`exemption_split` is the one that separates all three. AAA is sold off entirely,
+putting ₹10,000 of long-term gain on the books and leaving ₹1,15,000 of
+exemption. BBB must give up 100 shares from three lots: ₹1,600/share long-term,
+₹1,200/share long-term, and ₹80/share short-term. `fifo` takes the oldest lot
+and realises ₹1,60,000 of gain. `ltfo` ranks the short-term lot cheapest and
+takes all of it. The best answer takes **95 shares from the ₹1,200 lot** —
+filling the exemption to ₹1,24,000 of the ₹1,25,000 available — and the last
+5 short-term, for ₹80.
 
 `loss_offset` is the clearest demonstration of the asymmetry. Both LOSSCO lots
 lose exactly ₹400 a share, but the short-term one cancels short-term gain at
@@ -314,10 +394,10 @@ uv run pytest     # or: pytest
 | file | covers |
 |---|---|
 | `test_tax.py` | holding-period rules, the four-line identity against the step-by-step calculation, set-off order |
-| `test_optimizer.py` | the solver against an exhaustive search on 240 random portfolios, plus the counterexamples that rule out simpler rules |
-| `test_engine.py` | the three cases the brief requires, rebalancing mechanics, validation, CSV parsing |
+| `test_optimizer.py` | the solver against an exhaustive search on 240 random portfolios, plus the counterexamples that rule out simpler rules, and the FIFO and LTFO baselines |
+| `test_engine.py` | the three cases the brief requires, the two loss-and-exemption splits, rebalancing mechanics, validation, CSV parsing |
 | `test_api.py` | every endpoint, both input paths, the error contract |
-| `test_ui.py` | the front end's data path: both input sources, the method selector, bad uploads |
+| `test_ui.py` | the front end's data path: both input sources, all three plans, the coalesced trades table, bad uploads |
 
 The three the brief asks for are the first three sections of `test_engine.py`:
 the partial-lot edge case, a straightforward all-long-term rebalance, and a
@@ -338,7 +418,7 @@ real evidence rather than the same idea agreeing with itself.
 | **A2** | Holding period counted in calendar months, **strictly more than 12**. The anniversary itself is short-term; a 365-day count is off by one across a leap year. |
 | **A3** | Rates as above. Short-term gain gets no exemption. |
 | **A4** | Set-off order is forced: long-term loss against long-term gain; short-term loss against short-term gain before long-term gain. |
-| **A5** | The ₹1,25,000 exemption applies **after** loss set-off, not before. Genuinely arguable and material; isolated to one line in `tax.breakdown()`. |
+| **A5** | The ₹1,25,000 exemption applies **after** loss set-off, not before. Arguable, but it does not change this year's bill: both readings subtract the same amounts from the same base, and on 200,000 random portfolios the two orderings differ by ₹0.00. What the order changes is which resource is left over, which matters only for carry-forward — out of scope under A6. Isolated to one line in `tax.breakdown()`. |
 | **A6** | Stateless. The full exemption is assumed available, nothing carries between runs, and unused losses are not tracked. A second rebalance in the same financial year would under-state the tax. |
 | **A7** | Whole shares only, halves rounded away from zero. |
 | **A8** | Target weights add to 100% ± 0.01%, and every targeted ticker must already be held. A ticker held but **absent** from the targets has a 0% target and is sold off. The portfolio is assumed fully invested — there is no idle cash to deploy — and the engine only rebalances between tickers already held, so you cannot set a target for a stock you do not own. |

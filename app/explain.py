@@ -51,9 +51,9 @@ def _alternatives(
             continue
         delta = swap_tax_delta(lots, shares, i, j, n, cfg)
         if delta > 0:
-            verdict = f"would have cost Rs {delta:,.2f} more in tax"
+            verdict = f"would cost Rs {delta:,.2f} more in tax"
         elif delta < 0:
-            verdict = f"would have saved Rs {-delta:,.2f} - this plan is not optimal"
+            verdict = f"would save Rs {-delta:,.2f} - this plan is not optimal"
         else:
             verdict = "costs exactly the same in tax"
         out.append(
@@ -144,7 +144,7 @@ def lot_sales(
             f"Rs {realized:,.2f} in all"
         )
         text = (
-            f"{lot.lot.ticker}: sold {n} of {lot.lot.quantity} shares from the lot "
+            f"{lot.lot.ticker}: sell {n} of {lot.lot.quantity} shares from the lot "
             f"bought {lot.lot.buy_date} - "
             f"{holding_label(lot.lot.buy_date, sale_date)}, "
             f"{_BUCKET_NAME[lot.bucket]}, {lot.classification}. "
@@ -159,12 +159,12 @@ def lot_sales(
             text += " This is the only lot held in this ticker, so the choice was forced."
         else:
             text += (
-                " Every other lot of this ticker is already being sold in full, so "
-                "there were no spare shares to swap for these."
+                " Every other lot of this ticker is already fully committed in this "
+                "plan, so there are no spare shares to swap for these."
             )
         if left > 0:
             text += (
-                f" The remaining {left} shares are untouched and keep their "
+                f" The remaining {left} shares stay untouched and keep their "
                 f"original buy date of {lot.lot.buy_date}."
             )
 

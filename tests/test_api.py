@@ -78,7 +78,10 @@ def test_every_sell_carries_its_reasoning_and_a_priced_alternative():
     assert body["reasoning"]
 
 
-@pytest.mark.parametrize("scenario", ["edge_case", "all_ltcg", "at_target", "loss_offset"])
+@pytest.mark.parametrize(
+    "scenario", ["edge_case", "all_ltcg", "at_target", "loss_offset", "exemption_split",
+    "exemption_vs_loss", "loss_priority"]
+)
 def test_all_demo_scenarios_respond(scenario):
     assert client.get(f"/demo/{scenario}").status_code == 200
 

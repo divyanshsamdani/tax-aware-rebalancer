@@ -12,7 +12,7 @@ from datetime import date
 import pytest
 
 from app.models import Lot, SellRequirement, TaxConfig
-from app.optimizer import Allocation, solve_exact, solve_fifo
+from app.optimizer import Allocation, solve_fifo, solve_ltfo, solve_optimal
 from app.tax import price_lot
 from tests.bruteforce import solve_bruteforce
 
@@ -43,7 +43,7 @@ def test_the_answer_stops_where_the_exemption_runs_out_not_at_a_lot_boundary():
     p = priced(lots, {"AAA": 1000.0, "BBB": 2000.0})
     reqs = [SellRequirement("AAA", 100), SellRequirement("BBB", 100)]
 
-    best = solve_exact(p, reqs, CFG)
+    best = solve_optimal(p, reqs, CFG)
     assert best.shares == (100, 96, 4)
     assert best.tax(p, CFG) == pytest.approx(265.0)
 
@@ -63,14 +63,14 @@ def test_the_exemption_couples_tickers_that_look_independent():
         Lot("B2", "BBB", date(2026, 5, 1), 100, 1700.0),
     ]
     alone = priced(bbb, {"BBB": 2000.0})
-    assert solve_exact(alone, [SellRequirement("BBB", 100)], CFG).shares == (100, 0)
+    assert solve_optimal(alone, [SellRequirement("BBB", 100)], CFG).shares == (100, 0)
 
     with_neighbour = priced(
         [Lot("A1", "AAA", date(2023, 1, 1), 100, 100.0)] + bbb,
         {"AAA": 1500.0, "BBB": 2000.0},
     )
     reqs = [SellRequirement("AAA", 100), SellRequirement("BBB", 100)]
-    assert solve_exact(with_neighbour, reqs, CFG).shares != (100, 100, 0)
+    assert solve_optimal(with_neighbour, reqs, CFG).shares != (100, 100, 0)
 
 
 def test_the_best_plan_can_split_one_ticker_across_a_short_and_a_long_loss():
@@ -85,7 +85,7 @@ def test_the_best_plan_can_split_one_ticker_across_a_short_and_a_long_loss():
     p = priced(lots, {"X": 1000.0, "Y": 1000.0, "Z": 3000.0})
     reqs = [SellRequirement(t, 100) for t in ("X", "Y", "Z")]
 
-    best = solve_exact(p, reqs, CFG)
+    best = solve_optimal(p, reqs, CFG)
     assert best.shares == (30, 70, 100, 100)
     assert best.tax(p, CFG) == pytest.approx(6_750.0)
     assert solve_fifo(p, reqs, CFG).tax(p, CFG) == pytest.approx(6_825.0)
@@ -120,7 +120,7 @@ def _random_case(rng):
 def test_solver_matches_exhaustive_search_on_random_portfolios(seed):
     rng = random.Random(seed)
     p, reqs = _random_case(rng)
-    assert solve_exact(p, reqs, CFG).tax(p, CFG) == pytest.approx(
+    assert solve_optimal(p, reqs, CFG).tax(p, CFG) == pytest.approx(
         solve_bruteforce(p, reqs, CFG).tax(p, CFG), abs=1e-6
     )
 
@@ -129,7 +129,7 @@ def test_solver_matches_exhaustive_search_on_random_portfolios(seed):
 def test_solver_is_never_worse_than_fifo_and_always_sells_the_right_amount(seed):
     rng = random.Random(1000 + seed)
     p, reqs = _random_case(rng)
-    best = solve_exact(p, reqs, CFG)
+    best = solve_optimal(p, reqs, CFG)
     assert best.tax(p, CFG) <= solve_fifo(p, reqs, CFG).tax(p, CFG) + 1e-9
     for r in reqs:
         sold = sum(n for l, n in zip(p, best.shares) if l.lot.ticker == r.ticker)
@@ -142,13 +142,13 @@ def test_solver_is_never_worse_than_fifo_and_always_sells_the_right_amount(seed)
 def test_asking_for_more_shares_than_are_held_is_rejected():
     p = priced([Lot("A", "X", date(2023, 1, 1), 10, 100.0)], {"X": 200.0})
     with pytest.raises(ValueError, match="only 10 are held"):
-        solve_exact(p, [SellRequirement("X", 11)], CFG)
+        solve_optimal(p, [SellRequirement("X", 11)], CFG)
 
 
 def test_two_requirements_for_one_ticker_are_rejected():
     p = priced([Lot("A", "X", date(2023, 1, 1), 10, 100.0)], {"X": 200.0})
     with pytest.raises(ValueError, match="duplicate"):
-        solve_exact(p, [SellRequirement("X", 1), SellRequirement("X", 2)], CFG)
+        solve_optimal(p, [SellRequirement("X", 1), SellRequirement("X", 2)], CFG)
 
 
 def test_tie_break_never_buys_a_worse_tax_outcome():
@@ -160,7 +160,61 @@ def test_tie_break_never_buys_a_worse_tax_outcome():
     ]
     p = priced(lots, {"X": 3000.0})
     reqs = [SellRequirement("X", 100)]
-    best = solve_exact(p, reqs, CFG)
+    best = solve_optimal(p, reqs, CFG)
     assert best.tax(p, CFG) == pytest.approx(
         solve_bruteforce(p, reqs, CFG).tax(p, CFG), abs=1e-6
     )
+
+
+# Least tax first out
+def test_ltfo_takes_the_cheapest_lot_per_share_first():
+    """Long-term gain of Rs 1,000/share ranks at 125; short-term of Rs 100/share
+    ranks at 20, so the short-term lot goes first despite the higher rate."""
+    lots = [
+        Lot("L1", "A", date(2023, 1, 1), 100, 1_000.0),
+        Lot("L2", "A", date(2026, 5, 1), 100, 1_900.0),
+    ]
+    p = priced(lots, {"A": 2_000.0})
+    got = solve_ltfo(p, [SellRequirement("A", 100)], CFG)
+    assert got.shares == (0, 100)
+    assert not got.certified_optimal
+
+
+def test_ltfo_reaches_for_a_loss_lot_first_because_its_ranking_goes_negative():
+    lots = [
+        Lot("L1", "A", date(2023, 1, 1), 50, 1_200.0),
+        Lot("L2", "A", date(2026, 5, 1), 50, 2_200.0),
+    ]
+    p = priced(lots, {"A": 2_000.0})
+    assert solve_ltfo(p, [SellRequirement("A", 50)], CFG).shares == (0, 50)
+
+
+def test_ltfo_never_beats_the_solver_on_the_counterexample():
+    """It prices each ticker in isolation, so it cannot see that the exemption is
+    one pool shared across the portfolio."""
+    lots = [
+        Lot("A1", "AAA", date(2023, 1, 1), 100, 900.0),
+        Lot("B1", "BBB", date(2023, 1, 1), 100, 800.0),
+        Lot("B2", "BBB", date(2026, 5, 1), 100, 1700.0),
+    ]
+    p = priced(lots, {"AAA": 1000.0, "BBB": 2000.0})
+    reqs = [SellRequirement("AAA", 100), SellRequirement("BBB", 100)]
+    assert solve_optimal(p, reqs, CFG).tax(p, CFG) < solve_ltfo(p, reqs, CFG).tax(p, CFG)
+
+
+def test_ltfo_respects_the_required_quantity_and_lot_capacity():
+    lots = [
+        Lot("L1", "A", date(2023, 1, 1), 30, 1_990.0),
+        Lot("L2", "A", date(2026, 5, 1), 30, 1_995.0),
+    ]
+    p = priced(lots, {"A": 2_000.0})
+    got = solve_ltfo(p, [SellRequirement("A", 45)], CFG)
+    assert sum(got.shares) == 45
+    assert all(n <= lot.lot.quantity for n, lot in zip(got.shares, p))
+
+
+def test_ltfo_agrees_with_the_solver_whenever_only_one_lot_exists():
+    lots = [Lot("L1", "A", date(2023, 1, 1), 40, 1_000.0)]
+    p = priced(lots, {"A": 2_000.0})
+    reqs = [SellRequirement("A", 25)]
+    assert solve_ltfo(p, reqs, CFG).shares == solve_optimal(p, reqs, CFG).shares

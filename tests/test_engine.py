@@ -17,7 +17,7 @@ from app.models import Lot
 SALE = date(2026, 9, 6)
 
 
-def run(scenario: str, method: str = "exact"):
+def run(scenario: str, method: str = "optimal"):
     lots, prices, targets = ingest.load_scenario(f"samples/{scenario}")
     engine = Engine(lots, prices, targets, sale_date=SALE)
     return engine, engine.run(method)
@@ -297,6 +297,54 @@ def test_the_excel_byte_order_mark_does_not_hide_the_first_column():
 
 
 def test_every_bundled_scenario_loads_and_runs():
-    for name in ("edge_case", "all_ltcg", "at_target", "loss_offset"):
+    for name in (
+        "edge_case", "all_ltcg", "at_target", "loss_offset",
+        "exemption_split", "exemption_vs_loss", "loss_priority",
+    ):
         _, plan = run(name)
         assert plan.certified_optimal is True
+
+
+# Splits that only a solver finds
+def test_a_long_term_loss_is_spent_only_down_to_the_exemption_line():
+    """GAINCO leaves Rs 1,80,000 of long-term gain, so the first Rs 55,000 of
+    long-term loss is worth 12.5% and every rupee after it is worth nothing:
+    the exemption was always going to cover that gain. The plan stops the
+    long-term lot at exactly 55 shares and takes the rest short-term."""
+    _, plan = run("exemption_vs_loss")
+    assert sold(plan)["H1"] == 55 and sold(plan)["H2"] == 45
+    # Net long-term gain lands exactly on the exemption, with nothing taxable.
+    assert plan.tax.ltcg - plan.tax.ltcl_used_against_ltcg == 125_000.0
+    assert plan.tax.taxable_ltcg == 0.0
+    assert plan.summary.total_tax == 8_400.0
+
+
+def test_neither_shortcut_finds_the_exemption_line():
+    _, best = run("exemption_vs_loss")
+    _, ltfo = run("exemption_vs_loss", "ltfo")
+    _, fifo = run("exemption_vs_loss", "fifo")
+    assert best.summary.total_tax < ltfo.summary.total_tax < fifo.summary.total_tax
+    # LTFO picks the right lot to start from and then cannot tell when to stop.
+    assert sold(ltfo)["H1"] == 100
+
+
+def test_the_short_term_loss_is_worth_more_only_while_it_has_gain_to_cancel():
+    """The short-term loss saves 20% a rupee against the Rs 34,000 of short-term
+    gain, beating the long-term loss's 12.5%. Once that gain is used up the
+    surplus only carries over at 12.5%, and the bigger long-term loss is worth
+    more per share, so the plan switches."""
+    _, plan = run("loss_priority")
+    assert sold(plan)["H2"] == 43 and sold(plan)["H1"] == 57
+    assert plan.tax.taxable_stcg == 0.0
+    assert plan.summary.total_tax == 14_700.0
+
+
+def test_the_priority_between_the_two_losses_flips_part_way_through():
+    _, best = run("loss_priority")
+    _, ltfo = run("loss_priority", "ltfo")
+    _, fifo = run("loss_priority", "fifo")
+    assert best.summary.total_tax < ltfo.summary.total_tax < fifo.summary.total_tax
+    # LTFO ranks the short-term loss first, correctly, and then takes all of it.
+    assert sold(ltfo)["H2"] == 100
+    # Both plans sell the same 100 shares; only the split differs.
+    assert sum(sold(best).values()) == sum(sold(ltfo).values())

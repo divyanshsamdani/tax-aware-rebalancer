@@ -21,7 +21,10 @@ from .models import Lot, LotSale, Plan, Summary, TaxBreakdown, Trade, WeightRow
 from .optimizer import Method
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-Scenario = Literal["edge_case", "all_ltcg", "at_target", "loss_offset"]
+Scenario = Literal[
+    "edge_case", "all_ltcg", "at_target", "loss_offset", "exemption_split",
+    "exemption_vs_loss", "loss_priority",
+]
 
 # Pinned: the scenarios turn on particular lots being short-term, which a real
 # "today" would quietly undo once those lots aged past twelve months.
@@ -77,7 +80,7 @@ class RebalanceRequest(BaseModel):
     sale_date: Optional[date] = Field(
         default=None, description="Trade date. Defaults to today."
     )
-    method: Method = "exact"
+    method: Method = "optimal"
     compare_with_fifo: bool = True
 
     model_config = {
@@ -94,7 +97,7 @@ class RebalanceRequest(BaseModel):
                 "prices": {"ACME": 1000, "NOVA": 250},
                 "targets_pct": {"ACME": 20, "NOVA": 80},
                 "sale_date": "2026-09-06",
-                "method": "exact",
+                "method": "optimal",
             }
         }
     }
@@ -156,7 +159,7 @@ def demo(scenario: Scenario) -> dict:
     """
     lots, prices, targets = ingest.load_scenario(SAMPLES / scenario)
     engine = Engine(lots, prices, targets, sale_date=DEMO_SALE_DATE)
-    return _respond(engine, engine.run("exact"))
+    return _respond(engine, engine.run("optimal"))
 
 
 @app.post("/rebalance/upload", response_model=PlanResponse, tags=["rebalance"])
@@ -165,7 +168,7 @@ async def rebalance_upload(
     prices_file: UploadFile = File(..., description="ticker,current_price"),
     targets_file: UploadFile = File(..., description="ticker,target_weight_pct"),
     sale_date: str = Form("", description="YYYY-MM-DD or DD/MM/YYYY. Blank means today."),
-    method: Method = Form("exact"),
+    method: Method = Form("optimal"),
     compare_with_fifo: bool = Form(True),
 ) -> dict:
     """Upload the three CSVs, as in samples/edge_case/{lots,prices,targets}.csv."""

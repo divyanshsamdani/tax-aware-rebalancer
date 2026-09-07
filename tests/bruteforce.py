@@ -52,4 +52,4 @@ def solve_bruteforce(
             best = (t, tuple(shares))
 
     assert best is not None
-    return Allocation(best[1], "exact", True)
+    return Allocation(best[1], "optimal", True)

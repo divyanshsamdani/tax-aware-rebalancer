@@ -27,7 +27,7 @@ from typing import Literal, Sequence
 from .models import PricedLot, SellRequirement, TaxConfig
 from .tax import aggregates, tax_on, tax_pieces
 
-Method = Literal["exact", "fifo"]
+Method = Literal["optimal", "fifo", "ltfo"]
 
 # Big enough to absorb the solver's own rounding, far too small to buy a
 # meaningfully worse plan.
@@ -67,7 +67,7 @@ def _validate(lots: Sequence[PricedLot], reqs: Sequence[SellRequirement]) -> Non
             )
 
 
-def solve_exact(
+def solve_optimal(
     lots: Sequence[PricedLot], reqs: Sequence[SellRequirement], cfg: TaxConfig
 ) -> Allocation:
     """The cheapest legal allocation, solved in two passes.
@@ -144,7 +144,7 @@ def solve_exact(
     else:
         chosen = first.x
 
-    return Allocation(tuple(int(round(v)) for v in chosen[:n]), "exact", True)
+    return Allocation(tuple(int(round(v)) for v in chosen[:n]), "optimal", True)
 
 
 def solve_fifo(
@@ -166,13 +166,47 @@ def solve_fifo(
     return Allocation(tuple(shares), "fifo", False)
 
 
-SOLVERS = {"exact": solve_exact, "fifo": solve_fifo}
+def solve_ltfo(
+    lots: Sequence[PricedLot], reqs: Sequence[SellRequirement], cfg: TaxConfig
+) -> Allocation:
+    """Least tax first out: per ticker, fill from the lot with the smallest
+    gain_per_share * statutory rate for its bucket.
+
+    The strongest of the simple ranking rules, and the one a reviewer is most
+    likely to reach for. It still cannot see that the exemption is a single pool
+    shared across the whole portfolio, so it prices every lot in isolation and
+    carries no optimality guarantee. Ties break on the older lot.
+    """
+    _validate(lots, reqs)
+    index = lots_by_ticker(lots)
+    shares = [0] * len(lots)
+
+    def tax_per_share(i: int) -> float:
+        lot = lots[i]
+        rate = cfg.stcg_rate if lot.bucket == "ST" else cfg.ltcg_rate
+        return lot.gain_per_share * rate
+
+    for r in reqs:
+        remaining = r.shares
+        order = sorted(
+            index.get(r.ticker, []), key=lambda i: (tax_per_share(i), lots[i].lot.buy_date)
+        )
+        for i in order:
+            if remaining <= 0:
+                break
+            take = min(remaining, lots[i].lot.quantity)
+            shares[i] = take
+            remaining -= take
+    return Allocation(tuple(shares), "ltfo", False)
+
+
+SOLVERS = {"optimal": solve_optimal, "fifo": solve_fifo, "ltfo": solve_ltfo}
 
 
 def solve(
     lots: Sequence[PricedLot],
     reqs: Sequence[SellRequirement],
     cfg: TaxConfig,
-    method: Method = "exact",
+    method: Method = "optimal",
 ) -> Allocation:
     return SOLVERS[method](lots, reqs, cfg)
