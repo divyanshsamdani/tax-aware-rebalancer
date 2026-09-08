@@ -111,6 +111,14 @@ CLASS_KEY = (
 )
 
 
+def holding_period(buy: date, sale: date) -> str:
+    """The engine's own month count, without the "held" the prose form carries."""
+    months = taxrules.months_held(buy, sale)
+    if months >= 1:
+        return f"{months} month{'' if months == 1 else 's'}"
+    return f"{(sale - buy).days} days"
+
+
 def holdings_rows(engine: Engine) -> list[dict]:
     rows = []
     for lot in engine.lots:
@@ -118,16 +126,15 @@ def holdings_rows(engine: Engine) -> list[dict]:
         priced = taxrules.price_lot(lot, price, engine.sale_date, engine.cfg)
         rows.append(
             {
-                "Lot": lot.lot_id,
                 "Ticker": lot.ticker,
+                "Lot": lot.lot_id,
                 "Buy date": str(lot.buy_date),
-                "Class": priced.classification,
-                "Held": taxrules.holding_label(lot.buy_date, engine.sale_date),
+                "Holding period": holding_period(lot.buy_date, engine.sale_date),
                 "Quantity": lot.quantity,
                 "Buy price": lot.buy_price,
                 "Current price": price,
                 "Gain / share": priced.gain_per_share,
-                "Market value": lot.quantity * price,
+                "Class": priced.classification,
             }
         )
     return rows
@@ -192,8 +199,8 @@ def sell_lot_rows(plan: Plan, cfg: TaxConfig) -> list[dict]:
         bucket = "LT" if s.classification.startswith("LT") else "ST"
         rows.append(
             {
-                "Lot": s.lot_id,
                 "Ticker": s.ticker,
+                "Lot": s.lot_id,
                 "Class": s.classification,
                 "Shares to sell": s.shares_sold,
                 "Of lot": s.lot_quantity,
@@ -380,7 +387,15 @@ def render_plan(plan: Plan, cfg: TaxConfig) -> None:
 
     if plan.lot_sales:
         st.markdown("#### Why these lots")
-        if not plan.certified_optimal:
+        if plan.certified_optimal:
+            st.caption(
+                "Please note: the mathematics here does not work lot by lot. It "
+                "returns the optimal split for the whole portfolio at once, so "
+                "what follows checks that split rather than retracing how it was "
+                "reached. This plan is always at least as cheap as any rule-based "
+                "one; the other bundled scenarios show where the gap opens up."
+            )
+        else:
             st.caption("In the order this rule reached for them.")
         for sale in plan.lot_sales:
             with st.container(border=True):
@@ -396,27 +411,6 @@ def render_plan(plan: Plan, cfg: TaxConfig) -> None:
                         f"their original buy date of {sale.buy_date}.",
                         icon="🔒",
                     )
-                if sale.alternatives and plan.certified_optimal:
-                    with st.expander(
-                        f"What a different lot would cost ({len(sale.alternatives)} priced)"
-                    ):
-                        st.dataframe(
-                            [
-                                {
-                                    "Lot": a.lot_id,
-                                    "Bought": str(a.buy_date),
-                                    "Class": a.classification,
-                                    "Shares": a.shares,
-                                    "Tax difference": a.tax_delta,
-                                }
-                                for a in sale.alternatives
-                            ],
-                            hide_index=True,
-                        )
-                        st.caption(
-                            "Each figure is the tax recomputed on that swap, not a "
-                            "label. Nothing negative means nothing cheaper exists."
-                        )
 
     st.markdown("#### Weights after this plan")
     st.dataframe(

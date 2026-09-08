@@ -148,23 +148,53 @@ short-term loss is worth more while per share the long-term loss is bigger.
 ### Step 4 — how the engine explains itself
 
 The brief asks the engine to show its lot-selection reasoning. The easy way is a
-sentence template that restates what the solver did — but that text is not
-derived from anything, so if the solver were wrong it would read exactly as
-confident.
+sentence template that restates what came out — but that text is not derived
+from anything, so if the answer were wrong it would read exactly as confident.
 
-Instead, for every lot in the plan, `app/explain.py` takes the other lots of the
-same ticker, moves the shares across, **re-runs the tax calculation**, and
-reports the rupee difference. Every "why" sentence therefore contains a
-recomputed number, and the sign of that number is itself a check: at a genuine
-optimum, no swap can come back cheaper. This is affordable because of Step 1 —
-pricing a swap is a few multiplications, not another solve.
+For the two ranking rules the reasoning is straightforward, because they really
+do work lot by lot: each names its place in the sequence, the rule that put it
+there, how much of the ticker's requirement it covers and how many shares are
+left for the next lot. That last part is the mechanic the brief turns on.
 
-One thing that check cannot do is prove optimality on its own. It moves shares
-between two lots at a time, so a plan can survive every swap and still be dear:
-`ltfo` on `loss_priority` does exactly that, sitting ₹1,425 above the optimum
-because the cheaper plan is a *partial* split across two lots at once. The
-engine says so — the swap check is reported as corroborating the solver's
-guarantee where one exists, and explicitly as no proof where one does not.
+The optimal plan is a different problem, and worth being honest about. The
+mathematics does not work lot by lot at all — it settles every quantity across
+the portfolio at once, so there is no sequence inside it to narrate. Narrating
+one would describe an implementation detail rather than a reason; on these
+scenarios HiGHS returns the answer without branching even once.
+
+So instead of retracing how the split was reached, the engine **checks the
+split**. Every lot that is only partly sold reports the tax with one more share
+taken from it and one fewer, each against the cheapest partner lot of the same
+ticker. On `loss_priority` the long-term loss lot stops at 57 because one more
+share costs ₹5.00 and one fewer costs ₹25.00 — both directions dearer, both
+figures recomputed rather than asserted, and the two unequal because the
+stopping point sits on a kink rather than in the middle of a slope. Where a
+move turns out to be free the engine says so instead, since that means several
+plans tie rather than that a boundary was found.
+
+### Why there is no order to report
+
+The obvious objection is that the answer must be *describable* as an order even
+if it was not found that way. It is not, and this is worth showing rather than
+asserting. Rank every lot by gain per share at the rate that genuinely applies
+at the optimum — not the statutory rate, the real one — and fill greedily. If
+the answer were an ordering, this would reproduce it:
+
+| scenario | optimal | ranked at the true rates |
+|---|---|---|
+| `edge_case` | ₹150 | ₹150 |
+| `loss_offset` | ₹4,000 | ₹4,000 |
+| `exemption_split` | **₹80** | ₹5,625 |
+| `exemption_vs_loss` | **₹8,400** | ₹12,000 |
+| `loss_priority` | **₹14,700** | ₹16,175 |
+| `all_ltcg` | **₹0** | ₹43,437.50 |
+
+Four of six, and the reason is the one that runs through this whole document: a
+lot's worth changes as you take more of it. The first 95 shares of a lot can be
+free and the 96th cost 12.5%, and no per-lot score — at any rates, statutory or
+real — can hold that. There is no ordering to find, which is why the quantities
+are solved rather than sorted, and why the optimal plan is always at least as
+cheap as any rule that sorts them.
 
 ---
 
@@ -204,32 +234,25 @@ Post-rebalance weights land on 20% / 80% exactly. The remaining 25 shares of L2
 are untouched and keep their 2026-04-01 buy date, so a future sale classifies
 them correctly.
 
-The reasoning the engine emits for L1:
+The reasoning the engine emits for L1, under the optimal plan:
 
 > Supplies 60 of the 75 shares ACME must give up, taking the whole lot.
-> **Moving 25 shares to lot L2 (STCG) would cost ₹250.00 more in tax.**
 
-Two clauses and nothing else. The first is the fill: how much of the ticker's
-requirement this lot covers, how much of the lot that uses, and — for a rule
-that works through its lots in sequence — how many shares are left to find from
-the next one, which is the mechanic the brief turns on. The second is the tax
-function re-evaluated on the swap, not a label. The buy date, holding period, cost basis
-and share counts are structured fields on the same record and sit on screen
-beside it, so the prose does not restate them.
+and for L2, which is the lot the split lands in:
 
-Every plan explains its lots, each in the terms of the rule that produced it.
-A ranking rule works through a ticker in a fixed sequence, so its lots are
-listed in the order it reached for them and each one names its place in that
-sequence — *"1st pick for ACME: the lowest statutory tax per share of the lots
-still available, at ₹10.00"* for `ltfo`, *"the oldest lot still available"* for
-`fifo`. `optimal` has no such sequence to quote, because it settles every
-quantity at once, so its justification is the priced swap alone.
+> Supplies 15 of the 75 shares ACME must give up, 15 of its 40, leaving 25
+> untouched.
 
-The priced swaps are computed for every method and returned on every record,
-but only `optimal` shows them. It is the only plan that weighed alternatives,
-so it is the only one a swap can fairly judge — telling FIFO that a different
-lot would have been cheaper answers a question FIFO never asked, and the plan
-comparison at the top of the page says it better anyway.
+The buy date, holding period, cost basis and share counts are structured fields
+on the same record and sit on screen beside it, so the prose does not restate
+them. It carries the fill and nothing else — how much of the requirement this
+lot covers, how much of the lot that uses, and what is left behind.
+
+Under `fifo` and `ltfo` the same two lots additionally name their place in the
+sequence and where the remainder goes — *"1st pick for ACME: the oldest lot
+still available. Supplies 60 of the 75 shares ACME must give up, taking the
+whole lot; 15 still to find from the next lot."* — because those rules really
+do work through a ticker one lot at a time.
 
 Automated as
 `tests/test_engine.py::test_edge_case_sells_the_whole_long_term_lot_and_part_of_the_short_term_one`
@@ -300,7 +323,7 @@ intact — never a bare 500.
 
 **The response** carries: a summary with the total tax; the plain-English
 reasoning; per-ticker buy/sell instructions; a per-lot breakdown of the sells,
-each with its own reasoning and priced alternatives; the full set-off
+each with its own reasoning; the full set-off
 calculation; and the target, before and after weights.
 
 ### The three lot-selection methods

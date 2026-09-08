@@ -61,17 +61,6 @@ def test_edge_case_blends_the_tax_across_both_lots():
     assert plan.tax.total_tax == pytest.approx(150.0)
 
 
-def test_edge_case_prices_its_alternative_rather_than_asserting_it():
-    """The reasoning for the long-term lot must contain a number that came from
-    re-running the tax calculation on the swap, not a template."""
-    _, plan = run("edge_case")
-    l1 = next(s for s in plan.lot_sales if s.lot_id == "L1")
-    alt = l1.alternatives[0]
-    assert alt.lot_id == "L2"
-    assert alt.tax_delta == pytest.approx(250.0)
-    assert "Rs 250.00 more in tax" in alt.note
-
-
 def test_edge_case_hits_the_target_weights():
     _, plan = run("edge_case")
     weights = {w.ticker: w for w in plan.weights}
@@ -374,7 +363,6 @@ def test_each_method_explains_itself_in_its_own_terms():
     # so its justification is the priced swap rather than a ranking.
     best_l1 = next(s for s in best.lot_sales if s.lot_id == "L1")
     assert "pick for ACME" not in best_l1.reason
-    assert "Rs 250.00 more in tax" in best_l1.reason
 
 
 def test_the_reasoning_shows_the_fill_spilling_from_one_lot_into_the_next():
@@ -391,24 +379,6 @@ def test_the_reasoning_shows_the_fill_spilling_from_one_lot_into_the_next():
     assert "of the 75" not in by_id["L2"].reason
 
 
-def test_a_ranking_rule_is_not_judged_against_a_swap_it_never_weighed():
-    """FIFO takes lots in date order. Telling it a swap would have been cheaper
-    answers a question it never asked; the plan comparison says it better."""
-    _, fifo = run("loss_priority", "fifo")
-    assert all("not optimal" not in s.reason for s in fifo.lot_sales)
-    assert all("would save" not in s.reason for s in fifo.lot_sales)
-    # The priced swaps are still computed and still returned on the record.
-    assert any(s.alternatives for s in fifo.lot_sales)
-
-
-def test_the_solver_states_its_share_without_claiming_a_sequence():
-    """It settles every quantity at once, so there is no "next lot" to spill to."""
-    _, plan = run("edge_case")
-    l1 = next(s for s in plan.lot_sales if s.lot_id == "L1")
-    assert "Supplies 60 of the 75 shares ACME must give up" in l1.reason
-    assert "still to find" not in l1.reason
-
-
 def test_the_reasoning_does_not_repeat_what_the_structured_fields_already_say():
     """Buy date, holding period, cost and price are all fields on the record and
     all on screen beside it; the prose is for what they cannot say."""
@@ -418,16 +388,28 @@ def test_the_reasoning_does_not_repeat_what_the_structured_fields_already_say():
         assert restated not in l1.reason
 
 
-def test_a_ranking_rule_never_claims_the_swap_check_proves_it_optimal():
-    """LTFO survives every single-lot swap on loss_priority and is still Rs 1,425
-    off, because the cheaper plan is a partial split across two lots."""
-    _, ltfo = run("loss_priority", "ltfo")
-    _, best = run("loss_priority")
-    assert all(a.tax_delta >= 0 for s in ltfo.lot_sales for a in s.alternatives)
-    assert ltfo.summary.total_tax > best.summary.total_tax
-    note = next(line for line in ltfo.reasoning if "substitution" in line)
-    assert "not a proof" in note
-    assert "cheapest available" not in note
+def test_a_partial_fill_says_why_it_stopped_where_it_did():
+    """Both directions cost more, and the two figures differ because the
+    stopping point sits on a kink rather than in the middle of a slope."""
+    _, plan = run("loss_priority")
+    h1 = next(s for s in plan.lot_sales if s.lot_id == "H1")
+    assert "57 is the boundary: one more share costs Rs 5.00, one fewer costs Rs 25.00" in h1.reason
 
-    certified = next(line for line in best.reasoning if "substitution" in line)
-    assert "corroborates the solver's guarantee" in certified
+
+def test_a_tie_is_reported_as_a_tie_and_not_as_a_boundary():
+    """On exemption_split a share can move from B2 to B1 for nothing, so several
+    plans cost the same. Calling that a boundary would overstate it."""
+    _, plan = run("exemption_split")
+    b2 = next(s for s in plan.lot_sales if s.lot_id == "B2")
+    assert "an equally cheap plan exists" in b2.reason
+    assert "is the boundary" not in b2.reason
+
+
+def test_the_boundary_check_is_only_offered_where_it_means_something():
+    """A ranking rule did not weigh the share either side, and a whole lot has
+    no boundary to speak of."""
+    _, fifo = run("loss_priority", "fifo")
+    assert all("boundary" not in s.reason for s in fifo.lot_sales)
+    _, plan = run("loss_priority")
+    whole = next(s for s in plan.lot_sales if s.shares_sold == s.lot_quantity)
+    assert "boundary" not in whole.reason

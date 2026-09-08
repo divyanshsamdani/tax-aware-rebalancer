@@ -61,11 +61,11 @@ def test_the_required_shares_are_the_same_whichever_lots_supply_them():
 
 
 def test_holdings_table_shows_every_lot_with_its_own_buy_date():
-    engine = ui.scenario_engine("edge_case", EDGE)
-    rows = ui.holdings_rows(engine)
+    rows = ui.holdings_rows(ui.scenario_engine("edge_case", EDGE))
     assert [r["Lot"] for r in rows] == ["L1", "L2", "N1"]
     assert [r["Buy date"] for r in rows[:2]] == ["2023-02-10", "2026-04-01"]
-    assert rows[0]["Market value"] == 60 * 1000
+    assert [r["Holding period"] for r in rows[:2]] == ["42 months", "5 months"]
+    assert list(rows[0])[:2] == ["Ticker", "Lot"]
 
 
 def test_the_requirement_table_carries_buys_and_sells_in_one_signed_column():

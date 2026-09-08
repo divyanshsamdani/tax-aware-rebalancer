@@ -186,7 +186,6 @@ class Engine:
             f"Tax on this plan: Rs {breakdown.total_tax:,.2f}.",
             self._comparison_line(plan),
             explain.setoff_summary(breakdown, self.cfg),
-            explain.optimality_note(plan.lot_sales, plan.certified_optimal),
         ]
         if plan.summary.cash_left_over > 0.005:
             lines.append(

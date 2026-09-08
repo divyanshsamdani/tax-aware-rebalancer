@@ -14,64 +14,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Sequence
 
-from .models import Alternative, LotSale, PricedLot, TaxBreakdown, TaxConfig
+from .models import LotSale, PricedLot, TaxBreakdown, TaxConfig
 from .tax import aggregates, effective_rate, holding_label, tax_on
 
 _BUCKET_NAME = {"ST": "short-term", "LT": "long-term"}
-_MAX_ALTERNATIVES = 3
-
-
-def swap_tax_delta(
-    lots: Sequence[PricedLot],
-    shares: Sequence[int],
-    source: int,
-    target: int,
-    n: int,
-    cfg: TaxConfig,
-) -> float:
-    """Tax change from moving n shares between two lots of the same ticker, which
-    leaves the plan valid."""
-    trial = list(shares)
-    trial[source] -= n
-    trial[target] += n
-    return tax_on(*aggregates(lots, trial), cfg) - tax_on(*aggregates(lots, shares), cfg)
-
-
-def _alternatives(
-    lots: Sequence[PricedLot], shares: Sequence[int], i: int, cfg: TaxConfig
-) -> list[Alternative]:
-    out: list[Alternative] = []
-    ticker = lots[i].lot.ticker
-    for j, other in enumerate(lots):
-        if j == i or other.lot.ticker != ticker:
-            continue
-        room = other.lot.quantity - shares[j]
-        n = min(shares[i], room)
-        if n <= 0:
-            continue
-        delta = swap_tax_delta(lots, shares, i, j, n, cfg)
-        if delta > 0:
-            verdict = f"would cost Rs {delta:,.2f} more in tax"
-        elif delta < 0:
-            verdict = f"would save Rs {-delta:,.2f}, so this plan is not optimal"
-        else:
-            verdict = "costs exactly the same"
-        out.append(
-            Alternative(
-                lot_id=other.lot.lot_id,
-                buy_date=other.lot.buy_date,
-                classification=other.classification,
-                gain_per_share=other.gain_per_share,
-                shares=n,
-                tax_delta=delta,
-                note=(
-                    f"moving {n} share{'' if n == 1 else 's'} to lot "
-                    f"{other.lot.lot_id} ({other.classification}) {verdict}"
-                ),
-            )
-        )
-    out.sort(key=lambda a: a.tax_delta)
-    return out[:_MAX_ALTERNATIVES]
 
 
 def statutory_per_share(lot: PricedLot, cfg: TaxConfig) -> float:
@@ -111,8 +57,8 @@ def _ordinal(n: int) -> str:
 def _rule_clause(lot: PricedLot, method: str, cfg: TaxConfig, pick: int) -> str:
     """Why this method reached for this lot, at this point in its sequence.
 
-    `optimal` has no per-lot rule to quote: it chooses every quantity jointly
-    across the portfolio, so its justification is the priced swap that follows.
+    `optimal` has no per-lot rule to quote: it settles every quantity jointly
+    across the portfolio, so what stands in its place is the split itself.
     """
     ticker = lot.lot.ticker
     if method == "fifo":
@@ -123,6 +69,69 @@ def _rule_clause(lot: PricedLot, method: str, cfg: TaxConfig, pick: int) -> str:
             f"of the lots still available, at Rs {statutory_per_share(lot, cfg):,.2f}."
         )
     return ""
+
+
+def boundary_cost(
+    lots: Sequence[PricedLot],
+    shares: Sequence[int],
+    i: int,
+    cfg: TaxConfig,
+    step: int,
+) -> float | None:
+    """Tax change from moving one share into or out of lot `i`, against the
+    cheapest partner lot of the same ticker that can absorb the swap.
+
+    A partially filled lot begs the question "why stop there", and the answer is
+    that both directions cost more. This is that answer, recomputed rather than
+    claimed - and the two figures are rarely equal, because the stopping point
+    sits on a kink in the tax function.
+    """
+    ticker = lots[i].lot.ticker
+    base = tax_on(*aggregates(lots, shares), cfg)
+    best: float | None = None
+    for j, other in enumerate(lots):
+        if j == i or other.lot.ticker != ticker:
+            continue
+        trial = list(shares)
+        trial[i] += step
+        trial[j] -= step
+        if not (0 <= trial[i] <= lots[i].lot.quantity):
+            continue
+        if not (0 <= trial[j] <= other.lot.quantity):
+            continue
+        delta = tax_on(*aggregates(lots, trial), cfg) - base
+        best = delta if best is None else min(best, delta)
+    return best
+
+
+def _boundary_clause(
+    lots: Sequence[PricedLot], shares: Sequence[int], i: int, n: int, cfg: TaxConfig
+) -> str:
+    """Why this many and not one more or one less."""
+    up = boundary_cost(lots, shares, i, cfg, 1)
+    down = boundary_cost(lots, shares, i, cfg, -1)
+    if up is None or down is None or up < -1e-6 or down < -1e-6:
+        return ""
+
+    # A free move either way means the tax is flat here and several plans tie.
+    # Calling that a boundary would overstate it.
+    flat_up, flat_down = up < 0.005, down < 0.005
+    if flat_up and flat_down:
+        return f"The tax is flat around {n} shares, so several plans tie here."
+    if flat_down:
+        return (
+            f"One more share here costs Rs {up:,.2f}; one fewer costs nothing, so "
+            "an equally cheap plan exists."
+        )
+    if flat_up:
+        return (
+            f"One fewer share here costs Rs {down:,.2f}; one more costs nothing, so "
+            "an equally cheap plan exists."
+        )
+    return (
+        f"{n} is the boundary: one more share costs Rs {up:,.2f}, one fewer "
+        f"costs Rs {down:,.2f}."
+    )
 
 
 def _fill_clause(
@@ -194,18 +203,13 @@ def lot_sales(
         rate = effective_rate(net_st, net_lt, lot.bucket, cfg)
         realized = lot.gain_per_share * n
         left = lot.lot.quantity - n
-        alternatives = _alternatives(lots, shares, i, cfg)
 
         parts = [
             _rule_clause(lot, method, cfg, picks[ticker]),
             _fill_clause(lot, n, required[ticker], before, picks[ticker], sequential),
         ]
-        # Only a plan that weighed alternatives should be judged against one. A
-        # ranking rule never considered the swap, so "this plan is not optimal"
-        # answers a question it never asked; the plan comparison says it better.
-        if alternatives and method == "optimal":
-            best = alternatives[0].note
-            parts.append(best[0].upper() + best[1:] + ".")
+        if method == "optimal" and 0 < n < lot.lot.quantity:
+            parts.append(_boundary_clause(lots, shares, i, n, cfg))
         text = " ".join(p for p in parts if p)
 
         out.append(
@@ -224,7 +228,6 @@ def lot_sales(
                 realized_gain=realized,
                 marginal_tax_rate=rate,
                 reason=text,
-                alternatives=alternatives,
             )
         )
     return out
@@ -254,33 +257,4 @@ def setoff_summary(tax: TaxBreakdown, cfg: TaxConfig) -> str:
         f"Rs {cfg.ltcg_exemption:,.0f}. Taxable: Rs {tax.taxable_stcg:,.0f} "
         f"short-term at {cfg.stcg_rate:.1%} and Rs {tax.taxable_ltcg:,.0f} "
         f"long-term at {cfg.ltcg_rate:.1%}."
-    )
-
-
-def optimality_note(sales: Sequence[LotSale], certified: bool = True) -> str:
-    """What the table of alternatives actually proves.
-
-    Surviving every single-lot swap is a local check. For the solver's plan it
-    corroborates a guarantee that already exists; for a ranking rule it proves
-    nothing at all, because the cheaper plan may be several shares away in two
-    lots at once - which is exactly how LTFO loses on `loss_priority`.
-    """
-    swaps = [a for s in sales for a in s.alternatives]
-    if not swaps:
-        return "No substitution was possible: the plan is forced."
-    cheapest = min(a.tax_delta for a in swaps)
-    if cheapest < -1e-6:
-        return (
-            f"A single swap would save Rs {-cheapest:,.2f}, so this plan is not "
-            "optimal."
-        )
-    if certified:
-        return (
-            f"Checked {len(swaps)} alternative lot substitution(s); every one costs "
-            "the same or more, which corroborates the solver's guarantee."
-        )
-    return (
-        f"Checked {len(swaps)} alternative lot substitution(s) and none is cheaper, "
-        "but that is not a proof: a cheaper plan can lie several shares away across "
-        "two lots at once. Only the solver's plan carries a guarantee."
     )

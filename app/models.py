@@ -73,20 +73,6 @@ class SellRequirement:
 
 
 @dataclass(frozen=True)
-class Alternative:
-    """A lot the engine could have sold instead, priced by re-running the tax
-    calculation on the swap."""
-
-    lot_id: str
-    buy_date: date
-    classification: str
-    gain_per_share: float
-    shares: int
-    tax_delta: float
-    note: str
-
-
-@dataclass(frozen=True)
 class LotSale:
     """One sell recommendation, with the reasoning behind it."""
 
@@ -104,7 +90,6 @@ class LotSale:
     realized_gain: float
     marginal_tax_rate: float  # what the next rupee costs; see tax.effective_rate
     reason: str
-    alternatives: list[Alternative] = field(default_factory=list)
 
 
 @dataclass
