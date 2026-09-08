@@ -40,12 +40,17 @@ def months_held(buy_date: date, sale_date: date) -> int:
     return max(0, m)
 
 
-def holding_label(buy_date: date, sale_date: date) -> str:
-    """A '14 months held' style label for the report."""
+def holding_period(buy_date: date, sale_date: date) -> str:
+    """'14 months', or a day count for anything under a month."""
     m = months_held(buy_date, sale_date)
     if m >= 1:
-        return f"{m} month{'s' if m != 1 else ''} held"
-    return f"{(sale_date - buy_date).days} days held"
+        return f"{m} month{'s' if m != 1 else ''}"
+    return f"{(sale_date - buy_date).days} days"
+
+
+def holding_label(buy_date: date, sale_date: date) -> str:
+    """The prose form, for a sentence: '14 months held'."""
+    return f"{holding_period(buy_date, sale_date)} held"
 
 
 def price_lot(lot: Lot, price: float, sale_date: date, cfg: TaxConfig) -> PricedLot:

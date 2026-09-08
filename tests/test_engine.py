@@ -10,9 +10,9 @@ from datetime import date
 
 import pytest
 
-from app import ingest
+from app import explain, ingest
 from app.engine import Engine
-from app.models import Lot
+from app.models import Lot, TaxConfig
 
 SALE = date(2026, 9, 6)
 
@@ -389,20 +389,18 @@ def test_the_reasoning_does_not_repeat_what_the_structured_fields_already_say():
 
 
 def test_a_partial_fill_says_why_it_stopped_where_it_did():
-    """Both directions cost more, and the two figures differ because the
-    stopping point sits on a kink rather than in the middle of a slope."""
+    """Qualitative on purpose: the exact cost of moving a share depends on which
+    other lot absorbs it, and the point is that this quantity is where the plan
+    is cheapest."""
     _, plan = run("loss_priority")
     h1 = next(s for s in plan.lot_sales if s.lot_id == "H1")
-    assert "57 is the boundary: one more share costs Rs 5.00, one fewer costs Rs 25.00" in h1.reason
+    assert "57 is the boundary for this lot." in h1.reason
 
-
-def test_a_tie_is_reported_as_a_tie_and_not_as_a_boundary():
-    """On exemption_split a share can move from B2 to B1 for nothing, so several
-    plans cost the same. Calling that a boundary would overstate it."""
-    _, plan = run("exemption_split")
-    b2 = next(s for s in plan.lot_sales if s.lot_id == "B2")
-    assert "an equally cheap plan exists" in b2.reason
-    assert "is the boundary" not in b2.reason
+    # The reasons themselves are one shared footnote, not four clauses repeated
+    # on every partial lot, and they are alternatives rather than a list of facts.
+    note = explain.boundary_note(TaxConfig())
+    assert note.count(" or ") >= 3
+    assert "exemption goes unused" in note
 
 
 def test_the_boundary_check_is_only_offered_where_it_means_something():

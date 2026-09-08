@@ -3,8 +3,7 @@
 Rebalances an Indian listed-equity portfolio to its target weights and picks
 **which specific lots to sell** so that the capital gains tax on the plan is as
 small as it can be. Lot selection is solved as a linear program with whole-number
-variables, so the answer comes back proved optimal — not scored, not ranked, not
-filled oldest-first.
+variables, so the answer comes back with a proof that no cheaper plan exists.
 
 **Python 3.11 or newer.** Install with either tool, then pick a way in.
 
@@ -107,8 +106,8 @@ subject to  t ≥ aₖ·A(x) + bₖ·B(x) + cₖ      for each of the four lines
 
 `t` stands in for "the tax". You cannot write `max(...)` in a linear objective,
 so instead you add one extra variable, force it above all four lines, and
-minimise it — minimising pushes `t` down until it rests on whichever line is
-currently largest, which is exactly the tax.
+minimise it. It settles on whichever line is currently largest, which is the
+tax.
 
 `scipy.optimize.milp` hands this to the HiGHS solver, which returns a proved
 global optimum in milliseconds.
@@ -117,8 +116,8 @@ global optimum in milliseconds.
 
 **The ₹1,25,000 exemption is one pool shared across the whole portfolio.** So
 the real cost of a rupee of long-term gain is 0% until the pool runs out and
-12.5% after — which depends on what *every other ticker* is doing. Two things
-follow:
+12.5% after, and where that happens depends on what every other ticker is doing.
+Two consequences:
 
 - You cannot decide ticker by ticker. Selling the cheap lot in one name changes
   the right answer in another.
@@ -148,8 +147,8 @@ short-term loss is worth more while per share the long-term loss is bigger.
 ### Step 4 — how the engine explains itself
 
 The brief asks the engine to show its lot-selection reasoning. The easy way is a
-sentence template that restates what came out — but that text is not derived
-from anything, so if the answer were wrong it would read exactly as confident.
+sentence template that restates what came out. That text is not derived from
+anything, so if the answer were wrong it would read just as confident.
 
 For the two ranking rules the reasoning is straightforward, because they really
 do work lot by lot: each names its place in the sequence, the rule that put it
@@ -157,28 +156,31 @@ there, how much of the ticker's requirement it covers and how many shares are
 left for the next lot. That last part is the mechanic the brief turns on.
 
 The optimal plan is a different problem, and worth being honest about. The
-mathematics does not work lot by lot at all — it settles every quantity across
+mathematics does not work lot by lot at all. It settles every quantity across
 the portfolio at once, so there is no sequence inside it to narrate. Narrating
 one would describe an implementation detail rather than a reason; on these
 scenarios HiGHS returns the answer without branching even once.
 
-So instead of retracing how the split was reached, the engine **checks the
-split**. Every lot that is only partly sold reports the tax with one more share
-taken from it and one fewer, each against the cheapest partner lot of the same
-ticker. On `loss_priority` the long-term loss lot stops at 57 because one more
-share costs ₹5.00 and one fewer costs ₹25.00 — both directions dearer, both
-figures recomputed rather than asserted, and the two unequal because the
-stopping point sits on a kink rather than in the middle of a slope. Where a
-move turns out to be free the engine says so instead, since that means several
-plans tie rather than that a boundary was found.
+So instead of retracing how the split was reached, the page reports **the
+split**. Any lot that is only partly sold is flagged as sitting on a boundary,
+with a footnote on what moving off it tends to cost: either part of the
+₹1,25,000 exemption goes unused, or long-term gain is pushed above it, or
+short-term gain is realised at 20% while long-term was still free, or a loss is
+spent where it cancels less than it could elsewhere.
+
+It stays qualitative on purpose. An exact figure would have to name which other
+lot absorbs the share, because the cost differs by partner: on
+`exemption_split`, a share leaving B2 is free if B1 takes it and ₹16 if B3 does.
+Spelling that out for every lot buries the only point worth making, which is
+that this quantity is where the plan is cheapest.
 
 ### Why there is no order to report
 
 The obvious objection is that the answer must be *describable* as an order even
 if it was not found that way. It is not, and this is worth showing rather than
 asserting. Rank every lot by gain per share at the rate that genuinely applies
-at the optimum — not the statutory rate, the real one — and fill greedily. If
-the answer were an ordering, this would reproduce it:
+at the optimum, the real one rather than the statutory rate, and fill greedily.
+If the answer were an ordering, this would reproduce it:
 
 | scenario | optimal | ranked at the true rates |
 |---|---|---|
@@ -191,10 +193,10 @@ the answer were an ordering, this would reproduce it:
 
 Four of six, and the reason is the one that runs through this whole document: a
 lot's worth changes as you take more of it. The first 95 shares of a lot can be
-free and the 96th cost 12.5%, and no per-lot score — at any rates, statutory or
-real — can hold that. There is no ordering to find, which is why the quantities
-are solved rather than sorted, and why the optimal plan is always at least as
-cheap as any rule that sorts them.
+free and the 96th cost 12.5%, and no per-lot score can hold that at any rates,
+statutory or real. There is no ordering to find. That is why the quantities are
+solved instead of sorted, and why this plan is always at least as cheap as any
+rule that sorts them.
 
 ---
 
@@ -245,7 +247,7 @@ and for L2, which is the lot the split lands in:
 
 The buy date, holding period, cost basis and share counts are structured fields
 on the same record and sit on screen beside it, so the prose does not restate
-them. It carries the fill and nothing else — how much of the requirement this
+them. It carries the fill and nothing else: how much of the requirement this
 lot covers, how much of the lot that uses, and what is left behind.
 
 Under `fifo` and `ltfo` the same two lots additionally name their place in the
@@ -354,12 +356,12 @@ costs it ₹250:
 | `at_target` | ₹0 | ₹0 | ₹0 |
 
 Neither shortcut is safe. `fifo` is beaten badly on three of the five, which is
-unsurprising — it makes no tax decision at all, so whatever it costs is a
+unsurprising, since it makes no tax decision at all and whatever it costs is a
 coincidence. `ltfo` is the interesting one: it *does* rank on tax, and it still
 loses on the very edge case the brief specifies. It sees a short-term lot
 gaining ₹50/share (₹10 of tax at 20%) against a long-term lot gaining
-₹200/share (₹25 at 12.5%), so it empties the short-term lot first — never
-noticing the long-term gain was free, because the exemption had not been
+₹200/share (₹25 at 12.5%), so it empties the short-term lot first, never
+noticing that the long-term gain was free because the exemption had not been
 touched. Charging each lot its statutory rate is the whole mistake: the rate
 that actually applies depends on the rest of the portfolio.
 
@@ -411,8 +413,8 @@ gain is gone, the surplus carries to the long-term side at 12.5%, and ₹800 at
 (₹125). So the priority flips and the plan takes the last 57 shares long-term.
 
 Both times the ranking rule picks the right lot to start from and has no way to
-know when to stop. The stopping point is not a property of the lot — it is the
-point where the rest of the portfolio changes what the lot is worth.
+know when to stop. The stopping point is not a property of the lot. It is the
+point where the rest of the portfolio changes what that lot is worth.
 
 `exemption_split` is the one that separates all three. AAA is sold off entirely,
 putting ₹10,000 of long-term gain on the books and leaving ₹1,15,000 of
@@ -450,9 +452,9 @@ the partial-lot edge case, a straightforward all-long-term rebalance, and a
 portfolio already at target.
 
 `tests/bruteforce.py` is an exhaustive reference solver used only by the tests.
-It tries every possible split and keeps the cheapest — useless in production,
+It tries every possible split and keeps the cheapest. Useless in production,
 but it shares no logic with the linear program, so agreement between the two is
-real evidence rather than the same idea agreeing with itself.
+evidence rather than the same idea agreeing with itself.
 
 ---
 

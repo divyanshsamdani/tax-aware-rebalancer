@@ -1,12 +1,12 @@
-"""Why each lot was chosen.
+"""The sentence attached to each lot in a plan.
 
-A sentence template restating what the solver did would read exactly as
-confident if the solver were wrong. So instead, for every lot in the plan this
-module takes the other lots of the same ticker, actually moves the shares
-across, re-runs the tax calculation and reports the rupee difference. The sign
-of that difference is itself a check: at a genuine optimum, no swap comes back
-cheaper. It is affordable because tax depends only on the two realised-gain
-totals, so pricing a swap is a handful of multiplications, not another solve.
+Two rules work through a ticker one lot at a time, so their reasoning names the
+place in that sequence and where the remainder spills. The third settles every
+quantity at once and has no sequence to name, so it states the split and flags
+the quantities that sit on a boundary.
+
+Nothing here recomputes tax. The figures a reader needs are already structured
+fields on the record, so the prose carries only what those cannot say.
 """
 
 from __future__ import annotations
@@ -15,10 +15,7 @@ from datetime import date
 from typing import Sequence
 
 from .models import LotSale, PricedLot, TaxBreakdown, TaxConfig
-from .tax import aggregates, effective_rate, holding_label, tax_on
-
-_BUCKET_NAME = {"ST": "short-term", "LT": "long-term"}
-
+from .tax import aggregates, effective_rate, holding_label
 
 def statutory_per_share(lot: PricedLot, cfg: TaxConfig) -> float:
     """Gain per share at the lot's own statutory rate: what LTFO ranks on."""
@@ -71,67 +68,30 @@ def _rule_clause(lot: PricedLot, method: str, cfg: TaxConfig, pick: int) -> str:
     return ""
 
 
-def boundary_cost(
-    lots: Sequence[PricedLot],
-    shares: Sequence[int],
-    i: int,
-    cfg: TaxConfig,
-    step: int,
-) -> float | None:
-    """Tax change from moving one share into or out of lot `i`, against the
-    cheapest partner lot of the same ticker that can absorb the swap.
+def boundary_note(cfg: TaxConfig) -> str:
+    """The reasons a quantity can be a boundary, for a footnote or a tooltip.
 
-    A partially filled lot begs the question "why stop there", and the answer is
-    that both directions cost more. This is that answer, recomputed rather than
-    claimed - and the two figures are rarely equal, because the stopping point
-    sits on a kink in the tax function.
+    Written as alternatives because it is one of them at a time, not all four -
+    which of them applies depends on where the rest of the portfolio has left
+    the exemption and the losses.
     """
-    ticker = lots[i].lot.ticker
-    base = tax_on(*aggregates(lots, shares), cfg)
-    best: float | None = None
-    for j, other in enumerate(lots):
-        if j == i or other.lot.ticker != ticker:
-            continue
-        trial = list(shares)
-        trial[i] += step
-        trial[j] -= step
-        if not (0 <= trial[i] <= lots[i].lot.quantity):
-            continue
-        if not (0 <= trial[j] <= other.lot.quantity):
-            continue
-        delta = tax_on(*aggregates(lots, trial), cfg) - base
-        best = delta if best is None else min(best, delta)
-    return best
-
-
-def _boundary_clause(
-    lots: Sequence[PricedLot], shares: Sequence[int], i: int, n: int, cfg: TaxConfig
-) -> str:
-    """Why this many and not one more or one less."""
-    up = boundary_cost(lots, shares, i, cfg, 1)
-    down = boundary_cost(lots, shares, i, cfg, -1)
-    if up is None or down is None or up < -1e-6 or down < -1e-6:
-        return ""
-
-    # A free move either way means the tax is flat here and several plans tie.
-    # Calling that a boundary would overstate it.
-    flat_up, flat_down = up < 0.005, down < 0.005
-    if flat_up and flat_down:
-        return f"The tax is flat around {n} shares, so several plans tie here."
-    if flat_down:
-        return (
-            f"One more share here costs Rs {up:,.2f}; one fewer costs nothing, so "
-            "an equally cheap plan exists."
-        )
-    if flat_up:
-        return (
-            f"One fewer share here costs Rs {down:,.2f}; one more costs nothing, so "
-            "an equally cheap plan exists."
-        )
     return (
-        f"{n} is the boundary: one more share costs Rs {up:,.2f}, one fewer "
-        f"costs Rs {down:,.2f}."
+        "Moving off this number tends to waste one of the reliefs: either part "
+        f"of the Rs {cfg.ltcg_exemption:,.0f} exemption goes unused, or long-term "
+        f"gain is pushed above it, or short-term gain is realised at "
+        f"{cfg.stcg_rate:.0%} while long-term was still free, or a loss is spent "
+        "where it cancels less than it could elsewhere."
     )
+
+
+def _boundary_clause(n: int) -> str:
+    """Why the split stops here rather than one share either side.
+
+    Qualitative on purpose. The exact cost of a move depends on which other lot
+    absorbs the share, and with three lots in a ticker that differs by partner
+    and by direction, which buries the only point worth making.
+    """
+    return f"{n} is the boundary for this lot."
 
 
 def _fill_clause(
@@ -177,12 +137,7 @@ def lot_sales(
     sale_date: date,
     method: str = "optimal",
 ) -> list[LotSale]:
-    """One record per lot the plan sells, with its reasoning attached.
-
-    The prose carries only what the structured fields cannot: why this method
-    reached for this lot, what the next rupee actually costs as against the
-    statutory rate, and the priced cost of having chosen differently.
-    """
+    """One record per lot the plan sells, with its reasoning attached."""
     net_st, net_lt = aggregates(lots, shares)
     required: dict[str, int] = {}
     for lot, n in zip(lots, shares):
@@ -209,7 +164,7 @@ def lot_sales(
             _fill_clause(lot, n, required[ticker], before, picks[ticker], sequential),
         ]
         if method == "optimal" and 0 < n < lot.lot.quantity:
-            parts.append(_boundary_clause(lots, shares, i, n, cfg))
+            parts.append(_boundary_clause(n))
         text = " ".join(p for p in parts if p)
 
         out.append(

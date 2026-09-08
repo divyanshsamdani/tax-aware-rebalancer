@@ -6,7 +6,7 @@
     tax.price_lot                 lot -> short-term or long-term, gain per share
     optimizer.solve               which lots supply those shares
     tax.breakdown                 the set-off calculation on the result
-    explain.lot_sales             why those lots, priced not narrated
+    explain.lot_sales             the sentence attached to each sold lot
     portfolio.buy_plan            proceeds -> shares to buy back
 
 `sale_date` is passed in rather than read from the clock, because every lot's

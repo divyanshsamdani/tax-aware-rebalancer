@@ -15,7 +15,7 @@ from datetime import date
 
 import streamlit as st
 
-from app import ingest
+from app import explain, ingest
 from app import tax as taxrules
 from app.api import DEMO_SALE_DATE, SAMPLES
 from app.engine import Engine
@@ -29,7 +29,7 @@ SCENARIOS = {
     "exemption_vs_loss": "A long-term loss is worth nothing once the exemption "
     "already covers the gain. The best plan spends it down to that line exactly, "
     "then switches to the short-term loss.",
-    "loss_priority": "The short-term loss saves more per share — but only until "
+    "loss_priority": "The short-term loss saves more per share, but only until "
     "the short-term gain it offsets runs out. The best plan switches part-way.",
     "loss_offset": "A short-term loss sheltering a gain elsewhere.",
     "all_ltcg": "A plain long-term rebalance that fits inside the exemption.",
@@ -41,8 +41,7 @@ PLANS = [
     ("FIFO (oldest first)", "fifo"),
     ("LTFO (least tax first out)", "ltfo"),
 ]
-
-SHORT_NAME = {"optimal": "Optimal", "fifo": "FIFO", "ltfo": "LTFO"}
+PLAN_LABEL = {key: label for label, key in PLANS}
 
 # Green marks the plan that carries a guarantee, not the one that happens to win
 # on this input. FIFO and LTFO stay red even where they tie, because neither can
@@ -50,15 +49,45 @@ SHORT_NAME = {"optimal": "Optimal", "fifo": "FIFO", "ltfo": "LTFO"}
 PLAN_SHADE = {"optimal": "green", "fifo": "red", "ltfo": "red"}
 
 SHADES = {
-    "green": ("#16a34a", "rgba(22, 163, 74, 0.08)", "rgba(22, 163, 74, 0.22)"),
-    "red": ("#dc2626", "rgba(220, 38, 38, 0.08)", "rgba(220, 38, 38, 0.22)"),
+    "green": ("#16a34a", "rgba(22, 163, 74, 0.07)", "rgba(22, 163, 74, 0.20)"),
+    "red": ("#dc2626", "rgba(220, 38, 38, 0.07)", "rgba(220, 38, 38, 0.20)"),
 }
+
+#: One stylesheet, applied once. It sets the type hierarchy and turns each
+#: section heading into its own rule, which does the work `st.divider()` was
+#: doing with an extra element per section.
+STYLE = """
+<style>
+  .block-container, [data-testid="stMainBlockContainer"] {
+      max-width: 1180px; padding-top: 2.2rem;
+  }
+  [data-testid="stMainBlockContainer"] h1 {
+      font-size: 1.8rem; font-weight: 650; letter-spacing: -0.02em;
+  }
+  [data-testid="stMainBlockContainer"] h3 {
+      font-size: 1.02rem; font-weight: 650; margin: 2.1rem 0 0.2rem;
+      padding-top: 1rem; border-top: 1px solid rgba(128, 128, 128, 0.22);
+  }
+  [data-testid="stMainBlockContainer"] h4 {
+      font-size: 0.9rem; font-weight: 650; margin: 1.5rem 0 0.3rem;
+      letter-spacing: 0.01em;
+  }
+  [data-testid="stMetricValue"] { font-size: 1.35rem; font-weight: 600; }
+  [data-testid="stMetricLabel"] { font-size: 0.78rem; opacity: 0.7; }
+  .plan-name {
+      font-size: 0.72rem; font-weight: 650; letter-spacing: 0.06em;
+      text-transform: uppercase; opacity: 0.7;
+  }
+  .plan-tax { font-size: 1.7rem; font-weight: 650; line-height: 1.3; }
+  .plan-delta { font-size: 0.76rem; opacity: 0.7; margin-bottom: 0.55rem; }
+</style>
+"""
 
 
 METHOD_NOTE = {
     "optimal": "Solved as a mixed-integer linear program over every lot at once.",
-    "fifo": "FIFO makes no tax decision at all — the order is fixed by the buy "
-    "dates. Whatever it costs here is a coincidence.",
+    "fifo": "FIFO makes no tax decision at all. The order is fixed by the buy "
+    "dates, so whatever it costs here is a coincidence.",
     "ltfo": "LTFO does rank on tax, but it charges every lot its statutory rate. "
     "The rate that actually applies depends on how much exemption is left and "
     "which losses are absorbing gains elsewhere, so it ranks on the wrong number.",
@@ -111,14 +140,6 @@ CLASS_KEY = (
 )
 
 
-def holding_period(buy: date, sale: date) -> str:
-    """The engine's own month count, without the "held" the prose form carries."""
-    months = taxrules.months_held(buy, sale)
-    if months >= 1:
-        return f"{months} month{'' if months == 1 else 's'}"
-    return f"{(sale - buy).days} days"
-
-
 def holdings_rows(engine: Engine) -> list[dict]:
     rows = []
     for lot in engine.lots:
@@ -129,7 +150,7 @@ def holdings_rows(engine: Engine) -> list[dict]:
                 "Ticker": lot.ticker,
                 "Lot": lot.lot_id,
                 "Buy date": str(lot.buy_date),
-                "Holding period": holding_period(lot.buy_date, engine.sale_date),
+                "Holding period": taxrules.holding_period(lot.buy_date, engine.sale_date),
                 "Quantity": lot.quantity,
                 "Buy price": lot.buy_price,
                 "Current price": price,
@@ -306,36 +327,36 @@ def render_welcome() -> None:
 
 
 def render_input(engine: Engine, plan: Plan) -> None:
-    st.subheader("The portfolio")
-    st.caption(
-        "Every lot, with its own buy date and cost basis, classified as at the "
-        "trade date. " + CLASS_KEY
-    )
+    st.subheader("1 · The portfolio")
+    st.caption("Every lot, with its own buy date and cost basis. " + CLASS_KEY)
     st.dataframe(holdings_rows(engine), hide_index=True)
 
-    st.subheader("What the rebalance requires")
+    st.subheader("2 · What the rebalance requires")
     st.caption(
-        "What each ticker has to trade to reach its target weight — negative to "
-        "sell, positive to buy. This is fixed by price and target alone, so all "
-        "three plans below trade exactly this much; they differ only in which "
+        "Negative to sell, positive to buy. Fixed by price and target alone, so "
+        "every plan below trades exactly this much and differs only in which "
         "lots supply the shares."
     )
     st.dataframe(requirement_rows(plan), hide_index=True)
 
 
 def render_cards(plans: dict[str, Plan]) -> str:
-    st.subheader("Tax on each plan")
+    st.subheader("3 · Three ways to supply them")
     taxes = {key: plans[key].summary.total_tax for _, key in PLANS}
     selected = st.session_state.setdefault("plan", "optimal")
     inject_card_css(PLAN_SHADE, selected)
 
     best = min(taxes.values())
     for col, (label, key) in zip(st.columns(3), PLANS):
+        extra = taxes[key] - best
         with col, st.container(key=f"plan-{key}"):
-            st.markdown(f"**{label}**")
-            st.markdown(f"## {rupees(taxes[key])}")
-            extra = taxes[key] - best
-            st.caption("cheapest" if extra <= 0.005 else f"{rupees(extra)} more")
+            st.markdown(
+                f"<div class='plan-name'>{label}</div>"
+                f"<div class='plan-tax'>{rupees(taxes[key])}</div>"
+                f"<div class='plan-delta'>"
+                f"{'cheapest' if extra <= 0.005 else rupees(extra) + ' more'}</div>",
+                unsafe_allow_html=True,
+            )
             if st.button(
                 "Showing details" if key == selected else "View details",
                 key=f"btn-{key}",
@@ -347,7 +368,31 @@ def render_cards(plans: dict[str, Plan]) -> str:
     return st.session_state["plan"]
 
 
-def render_plan(plan: Plan, cfg: TaxConfig) -> None:
+SELL_TABLE_HELP = (
+    CLASS_KEY + " Gains are signed, so a loss is negative and a negative tax is "
+    "a saving. Tax per share applies each lot's statutory rate, which is not what "
+    "the lot actually costs once the exemption and the set-off of losses are "
+    "accounted for. A short-term loss carries two figures: what it saves against "
+    "short-term gain, and the 12.5% it drops to once that gain runs out."
+)
+
+NET_GAINS_HELP = (
+    "What this plan realises on each side, after losses cancel gains within that "
+    "side. The tax depends on nothing else: every lot above matters only through "
+    "these two numbers."
+)
+
+SOLVER_NOTE = (
+    "Please note: the mathematics here does not work lot by lot. It returns the "
+    "optimal split for the whole portfolio at once, so what follows checks that "
+    "split rather than retracing how it was reached. This plan is always at "
+    "least as cheap as any rule-based one; the other bundled scenarios show "
+    "where the gap opens up."
+)
+
+
+def render_plan(label: str, plan: Plan, cfg: TaxConfig) -> None:
+    st.subheader(label)
     if plan.certified_optimal:
         st.info(METHOD_NOTE[plan.method], icon="🧮")
     else:
@@ -360,51 +405,33 @@ def render_plan(plan: Plan, cfg: TaxConfig) -> None:
         st.info("No trades — every ticker is already at its target weight.")
 
     if plan.lot_sales:
-        st.markdown("#### Lot-level sell plan")
-        st.caption(
-            CLASS_KEY + " Gains are signed, so a loss is negative and a negative "
-            "tax is a saving. **Tax per share** applies "
-            "each lot's statutory rate, which is not what the lot actually costs "
-            "once the exemption and the set-off of losses are accounted for."
-            + (" This is the column LTFO sorts on." if plan.method == "ltfo" else "")
-            + " A short-term loss carries two figures: what it saves against "
-            "short-term gain, and the 12.5% it drops to once that gain runs out."
-        )
+        st.markdown("#### Lot-level sell plan", help=SELL_TABLE_HELP)
+        if plan.method == "ltfo":
+            st.caption("**Tax per share** is the column LTFO sorts on.")
         st.dataframe(sell_lot_rows(plan, cfg), hide_index=True)
 
         net_st, net_lt = net_gains(plan)
-        st.markdown(
-            "**Net gains**",
-            help=(
-                "What this plan realises on each side, after losses cancel gains "
-                "within that side. The tax depends on nothing else: every lot "
-                "above matters only through these two numbers."
-            ),
-        )
+        st.markdown("**Net gains**", help=NET_GAINS_HELP)
         totals = st.columns(2)
         totals[0].metric("Short-term", signed_rupees(net_st))
         totals[1].metric("Long-term", signed_rupees(net_lt))
 
-    if plan.lot_sales:
         st.markdown("#### Why these lots")
-        if plan.certified_optimal:
-            st.caption(
-                "Please note: the mathematics here does not work lot by lot. It "
-                "returns the optimal split for the whole portfolio at once, so "
-                "what follows checks that split rather than retracing how it was "
-                "reached. This plan is always at least as cheap as any rule-based "
-                "one; the other bundled scenarios show where the gap opens up."
-            )
-        else:
-            st.caption("In the order this rule reached for them.")
+        st.caption(SOLVER_NOTE if plan.certified_optimal else
+                   "In the order this rule reached for them.")
+        note = prettify(explain.boundary_note(cfg))
         for sale in plan.lot_sales:
+            partial = 0 < sale.shares_sold < sale.lot_quantity
             with st.container(border=True):
                 st.markdown(
                     f"**{sale.ticker} · lot `{sale.lot_id}`** &nbsp; "
                     f"`{sale.classification}` &nbsp;·&nbsp; bought {sale.buy_date} "
                     f"·  {sale.holding}"
                 )
-                st.markdown(prettify(sale.reason))
+                st.markdown(
+                    prettify(sale.reason),
+                    help=note if partial and plan.certified_optimal else None,
+                )
                 if sale.remaining_shares:
                     st.info(
                         f"{sale.remaining_shares} shares stay in this lot, keeping "
@@ -443,6 +470,7 @@ def main() -> None:
     st.set_page_config(
         page_title="Tax-Aware Rebalancing Planner", page_icon="🧾", layout="wide"
     )
+    st.markdown(STYLE, unsafe_allow_html=True)
     engine, error = collect_input()
 
     st.title("Tax-aware rebalancing planner")
@@ -465,10 +493,8 @@ def main() -> None:
         return
 
     render_input(engine, plans["optimal"])
-    st.divider()
     selected = render_cards(plans)
-    st.divider()
-    render_plan(plans[selected], engine.cfg)
+    render_plan(PLAN_LABEL[selected], plans[selected], engine.cfg)
 
 
 if __name__ == "__main__":
