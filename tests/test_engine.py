@@ -47,7 +47,7 @@ def test_edge_case_leaves_the_remainder_with_its_original_buy_date():
     remainder = next(s for s in plan.lot_sales if s.lot_id == "L2")
     assert remainder.remaining_shares == 25
     assert remainder.buy_date == date(2026, 4, 1)
-    assert "keep their original buy date of 2026-04-01" in remainder.reason
+    assert remainder.lot_quantity - remainder.shares_sold == 25
 
 
 def test_edge_case_blends_the_tax_across_both_lots():
@@ -348,3 +348,86 @@ def test_the_priority_between_the_two_losses_flips_part_way_through():
     assert sold(ltfo)["H2"] == 100
     # Both plans sell the same 100 shares; only the split differs.
     assert sum(sold(best).values()) == sum(sold(ltfo).values())
+
+
+# The reasoning has to belong to the plan it is attached to
+def test_each_method_explains_itself_in_its_own_terms():
+    _, best = run("edge_case")
+    _, fifo = run("edge_case", "fifo")
+    _, ltfo = run("edge_case", "ltfo")
+
+    fifo_l1 = next(s for s in fifo.lot_sales if s.lot_id == "L1")
+    assert fifo_l1.reason.startswith("1st pick for ACME: the oldest lot still available")
+
+    ltfo_l2 = next(s for s in ltfo.lot_sales if s.lot_id == "L2")
+    assert ltfo_l2.reason.startswith(
+        "1st pick for ACME: the lowest statutory tax per share"
+    )
+    assert "at Rs 10.00" in ltfo_l2.reason
+
+    # Each rule works through a ticker in a fixed sequence, so the lots are listed
+    # in the order it reached for them.
+    assert [s.lot_id for s in ltfo.lot_sales] == ["L2", "L1"]
+    assert [s.lot_id for s in fifo.lot_sales] == ["L1", "L2"]
+
+    # The solver has no per-lot rule to quote: it settles every quantity at once,
+    # so its justification is the priced swap rather than a ranking.
+    best_l1 = next(s for s in best.lot_sales if s.lot_id == "L1")
+    assert "pick for ACME" not in best_l1.reason
+    assert "Rs 250.00 more in tax" in best_l1.reason
+
+
+def test_the_reasoning_shows_the_fill_spilling_from_one_lot_into_the_next():
+    """The case the brief turns on: a lot is emptied, the quantity still needed
+    spills into the next one, and the shares beyond that stay put."""
+    _, plan = run("edge_case", "fifo")
+    by_id = {s.lot_id: s for s in plan.lot_sales}
+    assert (
+        "Supplies 60 of the 75 shares ACME must give up, taking the whole lot; "
+        "15 still to find from the next lot." in by_id["L1"].reason
+    )
+    assert "Covers the remaining 15 from its 40, leaving 25 untouched." in by_id["L2"].reason
+    # A later pick counts against what was still outstanding, not the original total.
+    assert "of the 75" not in by_id["L2"].reason
+
+
+def test_a_ranking_rule_is_not_judged_against_a_swap_it_never_weighed():
+    """FIFO takes lots in date order. Telling it a swap would have been cheaper
+    answers a question it never asked; the plan comparison says it better."""
+    _, fifo = run("loss_priority", "fifo")
+    assert all("not optimal" not in s.reason for s in fifo.lot_sales)
+    assert all("would save" not in s.reason for s in fifo.lot_sales)
+    # The priced swaps are still computed and still returned on the record.
+    assert any(s.alternatives for s in fifo.lot_sales)
+
+
+def test_the_solver_states_its_share_without_claiming_a_sequence():
+    """It settles every quantity at once, so there is no "next lot" to spill to."""
+    _, plan = run("edge_case")
+    l1 = next(s for s in plan.lot_sales if s.lot_id == "L1")
+    assert "Supplies 60 of the 75 shares ACME must give up" in l1.reason
+    assert "still to find" not in l1.reason
+
+
+def test_the_reasoning_does_not_repeat_what_the_structured_fields_already_say():
+    """Buy date, holding period, cost and price are all fields on the record and
+    all on screen beside it; the prose is for what they cannot say."""
+    _, plan = run("edge_case")
+    l1 = next(s for s in plan.lot_sales if s.lot_id == "L1")
+    for restated in ("2023-02-10", "42 months held", "800.00/share", "60 of 60"):
+        assert restated not in l1.reason
+
+
+def test_a_ranking_rule_never_claims_the_swap_check_proves_it_optimal():
+    """LTFO survives every single-lot swap on loss_priority and is still Rs 1,425
+    off, because the cheaper plan is a partial split across two lots."""
+    _, ltfo = run("loss_priority", "ltfo")
+    _, best = run("loss_priority")
+    assert all(a.tax_delta >= 0 for s in ltfo.lot_sales for a in s.alternatives)
+    assert ltfo.summary.total_tax > best.summary.total_tax
+    note = next(line for line in ltfo.reasoning if "substitution" in line)
+    assert "not a proof" in note
+    assert "cheapest available" not in note
+
+    certified = next(line for line in best.reasoning if "substitution" in line)
+    assert "corroborates the solver's guarantee" in certified

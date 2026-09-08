@@ -103,18 +103,12 @@ def prettify(text: str) -> str:
     return text.replace("Rs ", "₹")
 
 
-def marker(bucket: str) -> str:
-    """Long-term green, short-term orange, everywhere a lot is listed."""
-    return "🟢" if bucket == "LT" else "🟠"
-
-
-def holding_cell(bucket: str) -> str:
-    return f"{marker(bucket)} {'Long-term' if bucket == 'LT' else 'Short-term'}"
-
-
-def term_cell(bucket: str) -> str:
-    """The dense form, for tables that are already carrying a lot of numbers."""
-    return f"{marker(bucket)} {bucket}"
+#: The standard four-letter codes carry the holding period and the sign of the
+#: result at once, and unlike a colour neither half reads as good or bad.
+CLASS_KEY = (
+    "LTCG / LTCL are long-term gain or loss, held more than 12 months; "
+    "STCG / STCL are short-term."
+)
 
 
 def holdings_rows(engine: Engine) -> list[dict]:
@@ -127,7 +121,7 @@ def holdings_rows(engine: Engine) -> list[dict]:
                 "Lot": lot.lot_id,
                 "Ticker": lot.ticker,
                 "Buy date": str(lot.buy_date),
-                "Holding": holding_cell(priced.bucket),
+                "Class": priced.classification,
                 "Held": taxrules.holding_label(lot.buy_date, engine.sale_date),
                 "Quantity": lot.quantity,
                 "Buy price": lot.buy_price,
@@ -200,7 +194,7 @@ def sell_lot_rows(plan: Plan, cfg: TaxConfig) -> list[dict]:
             {
                 "Lot": s.lot_id,
                 "Ticker": s.ticker,
-                "Term": term_cell(bucket),
+                "Class": s.classification,
                 "Shares to sell": s.shares_sold,
                 "Of lot": s.lot_quantity,
                 "Left": s.remaining_shares,
@@ -289,8 +283,8 @@ def render_welcome() -> None:
     left, right = st.columns(2)
     left.markdown(
         "**Rates applied**  \n"
-        "🟠 Short-term, held 12 months or less — **20%**, no exemption  \n"
-        "🟢 Long-term, held more than 12 months — **12.5%** above **₹1,25,000** a year"
+        "Short-term, held 12 months or less — **20%**, no exemption  \n"
+        "Long-term, held more than 12 months — **12.5%** above **₹1,25,000** a year"
     )
     right.markdown(
         "**Three plans, side by side**  \n"
@@ -307,8 +301,8 @@ def render_welcome() -> None:
 def render_input(engine: Engine, plan: Plan) -> None:
     st.subheader("The portfolio")
     st.caption(
-        "Every lot, with its own buy date and cost basis. 🟢 long-term, "
-        "🟠 short-term, as at the trade date."
+        "Every lot, with its own buy date and cost basis, classified as at the "
+        "trade date. " + CLASS_KEY
     )
     st.dataframe(holdings_rows(engine), hide_index=True)
 
@@ -361,32 +355,38 @@ def render_plan(plan: Plan, cfg: TaxConfig) -> None:
     if plan.lot_sales:
         st.markdown("#### Lot-level sell plan")
         st.caption(
-            "🟢 LT long-term, 🟠 ST short-term. Gains are signed, so a loss is "
-            "negative and a negative tax is a saving. **Tax per share** uses "
-            "statutory rates — the number a ranking rule sorts on, not what the "
-            "lot actually costs. A short-term loss carries two: what it saves "
-            "against short-term gain, and the 12.5% it drops to once that gain "
-            "runs out."
+            CLASS_KEY + " Gains are signed, so a loss is negative and a negative "
+            "tax is a saving. **Tax per share** applies "
+            "each lot's statutory rate, which is not what the lot actually costs "
+            "once the exemption and the set-off of losses are accounted for."
+            + (" This is the column LTFO sorts on." if plan.method == "ltfo" else "")
+            + " A short-term loss carries two figures: what it saves against "
+            "short-term gain, and the 12.5% it drops to once that gain runs out."
         )
         st.dataframe(sell_lot_rows(plan, cfg), hide_index=True)
 
         net_st, net_lt = net_gains(plan)
-        totals = st.columns(2)
-        totals[0].metric("Net short-term gain", signed_rupees(net_st))
-        totals[1].metric("Net long-term gain", signed_rupees(net_lt))
-        st.caption(
-            "What this plan realises on each side, after losses cancel gains within "
-            "that side. The tax is a function of just these two numbers — which is "
-            "what makes the choice of lots a linear program rather than a search."
+        st.markdown(
+            "**Net gains**",
+            help=(
+                "What this plan realises on each side, after losses cancel gains "
+                "within that side. The tax depends on nothing else: every lot "
+                "above matters only through these two numbers."
+            ),
         )
+        totals = st.columns(2)
+        totals[0].metric("Short-term", signed_rupees(net_st))
+        totals[1].metric("Long-term", signed_rupees(net_lt))
 
+    if plan.lot_sales:
         st.markdown("#### Why these lots")
+        if not plan.certified_optimal:
+            st.caption("In the order this rule reached for them.")
         for sale in plan.lot_sales:
             with st.container(border=True):
                 st.markdown(
                     f"**{sale.ticker} · lot `{sale.lot_id}`** &nbsp; "
-                    f"{marker('LT' if sale.classification.startswith('LT') else 'ST')} "
-                    f"{sale.classification} &nbsp;·&nbsp; bought {sale.buy_date} "
+                    f"`{sale.classification}` &nbsp;·&nbsp; bought {sale.buy_date} "
                     f"·  {sale.holding}"
                 )
                 st.markdown(prettify(sale.reason))
@@ -396,7 +396,7 @@ def render_plan(plan: Plan, cfg: TaxConfig) -> None:
                         f"their original buy date of {sale.buy_date}.",
                         icon="🔒",
                     )
-                if sale.alternatives:
+                if sale.alternatives and plan.certified_optimal:
                     with st.expander(
                         f"What a different lot would cost ({len(sale.alternatives)} priced)"
                     ):

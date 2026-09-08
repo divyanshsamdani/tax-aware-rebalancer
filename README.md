@@ -159,6 +159,13 @@ recomputed number, and the sign of that number is itself a check: at a genuine
 optimum, no swap can come back cheaper. This is affordable because of Step 1 —
 pricing a swap is a few multiplications, not another solve.
 
+One thing that check cannot do is prove optimality on its own. It moves shares
+between two lots at a time, so a plan can survive every swap and still be dear:
+`ltfo` on `loss_priority` does exactly that, sitting ₹1,425 above the optimum
+because the cheaper plan is a *partial* split across two lots at once. The
+engine says so — the swap check is reported as corroborating the solver's
+guarantee where one exists, and explicitly as no proof where one does not.
+
 ---
 
 ## The required edge case
@@ -199,14 +206,30 @@ them correctly.
 
 The reasoning the engine emits for L1:
 
-> ACME: sell 60 of 60 shares from the lot bought 2023-02-10 — 42 months held,
-> long-term, LTCG. Cost ₹800.00/share against ₹1,000.00 today, so a gain of
-> ₹200.00/share, ₹12,000.00 in all. One more rupee of long-term gain would cost
-> 0.00%, because the ₹1,25,000 long-term exemption is not yet used up.
-> **Selling 25 share(s) from lot L2 instead (bought 2026-04-01, STCG, gain of
-> ₹50.00/share) would cost ₹250.00 more in tax.**
+> Supplies 60 of the 75 shares ACME must give up, taking the whole lot.
+> **Moving 25 shares to lot L2 (STCG) would cost ₹250.00 more in tax.**
 
-That ₹250 is the tax function re-evaluated on the swap, not a label.
+Two clauses and nothing else. The first is the fill: how much of the ticker's
+requirement this lot covers, how much of the lot that uses, and — for a rule
+that works through its lots in sequence — how many shares are left to find from
+the next one, which is the mechanic the brief turns on. The second is the tax
+function re-evaluated on the swap, not a label. The buy date, holding period, cost basis
+and share counts are structured fields on the same record and sit on screen
+beside it, so the prose does not restate them.
+
+Every plan explains its lots, each in the terms of the rule that produced it.
+A ranking rule works through a ticker in a fixed sequence, so its lots are
+listed in the order it reached for them and each one names its place in that
+sequence — *"1st pick for ACME: the lowest statutory tax per share of the lots
+still available, at ₹10.00"* for `ltfo`, *"the oldest lot still available"* for
+`fifo`. `optimal` has no such sequence to quote, because it settles every
+quantity at once, so its justification is the priced swap alone.
+
+The priced swaps are computed for every method and returned on every record,
+but only `optimal` shows them. It is the only plan that weighed alternatives,
+so it is the only one a swap can fairly judge — telling FIFO that a different
+lot would have been cheaper answers a question FIFO never asked, and the plan
+comparison at the top of the page says it better anyway.
 
 Automated as
 `tests/test_engine.py::test_edge_case_sells_the_whole_long_term_lot_and_part_of_the_short_term_one`
@@ -230,7 +253,7 @@ implementation that could drift away from the API.
 - It opens on nothing but the rates and the choice of input. Pick a scenario or
   upload three CSVs and the page fills in.
 - **The portfolio comes first**: every lot with its own buy date and cost basis,
-  marked 🟢 long-term or 🟠 short-term as at the trade date. Then the shares that
+  classified LTCG, LTCL, STCG or STCL as at the trade date. Then the shares that
   must leave each ticker — fixed by price and target alone, so it is the same
   whichever lots supply them.
 - **The three plans are the navigation.** Their tax sits side by side in three

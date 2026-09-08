@@ -72,8 +72,10 @@ def test_the_edge_case_demo_returns_the_whole_plan():
 def test_every_sell_carries_its_reasoning_and_a_priced_alternative():
     body = client.get("/demo/edge_case").json()
     first = body["lot_sales"][0]
-    assert "42 months held" in first["reason"]
+    assert first["holding"] == "42 months held"
     assert first["classification"] == "LTCG"
+    # The prose carries the priced counterfactual, not a restatement of the fields.
+    assert "Rs 250.00 more in tax" in first["reason"]
     assert first["alternatives"][0]["tax_delta"] == 250.0
     assert body["reasoning"]
 

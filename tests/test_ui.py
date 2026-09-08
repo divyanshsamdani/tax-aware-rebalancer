@@ -22,9 +22,15 @@ def plan(scenario: str = "edge_case", method: str = "optimal"):
     return ui.scenario_engine(scenario, EDGE).run(method, compare=False)
 
 
-def test_every_bundled_scenario_is_reachable_from_the_picker():
-    for name in ui.SCENARIOS:
-        assert (SAMPLES / name).is_dir()
+def test_the_picker_the_api_and_the_samples_directory_all_agree():
+    """Three lists of scenario names that have to stay in step. They drifted
+    once already, leaving the API advertising a count it no longer had."""
+    from typing import get_args
+    from app.api import Scenario
+
+    on_disk = {p.name for p in SAMPLES.iterdir() if p.is_dir()}
+    assert set(ui.SCENARIOS) == on_disk
+    assert set(get_args(Scenario)) == on_disk
 
 
 def test_all_three_plans_are_offered_and_reach_a_real_solver():
@@ -80,7 +86,7 @@ def test_the_sell_leg_is_broken_out_lot_by_lot_with_signed_gains():
     assert [r["Lot"] for r in rows] == ["L1", "L2"]
     assert sum(r["Shares to sell"] for r in rows) == 75
     assert rows[0]["Gain per share"] == 200.0 and rows[1]["Left"] == 25
-    assert (rows[0]["Term"], rows[1]["Term"]) == ("🟢 LT", "🟠 ST")
+    assert (rows[0]["Class"], rows[1]["Class"]) == ("LTCG", "STCG")
 
 
 def test_the_sell_plan_drops_what_the_holdings_table_already_carries():
@@ -136,10 +142,13 @@ def test_a_loss_lot_carries_a_negative_gain_per_share():
     assert any(r["Gain per share"] < 0 for r in rows)
 
 
-def test_holdings_table_marks_long_and_short_term_lots():
+def test_holdings_table_classifies_every_lot():
+    """The four-letter code carries the holding period and the sign of the
+    result at once, and neither half of it reads as good or bad."""
     rows = ui.holdings_rows(ui.scenario_engine("edge_case", EDGE))
-    assert rows[0]["Holding"] == "🟢 Long-term"
-    assert rows[1]["Holding"] == "🟠 Short-term"
+    assert [r["Class"] for r in rows] == ["LTCG", "STCG", "LTCG"]
+    losses = ui.holdings_rows(ui.scenario_engine("loss_offset", EDGE))
+    assert any(r["Class"].endswith("L") for r in losses)
 
 
 def test_only_the_plan_that_carries_a_guarantee_is_green():
@@ -164,6 +173,15 @@ def test_the_three_way_scenario_separates_all_three_methods():
     best = plan("exemption_split", "optimal")
     partial = [s for s in best.lot_sales if 0 < s.shares_sold < s.lot_quantity]
     assert partial, "the point of this scenario is that the answer is not a whole lot"
+
+
+def test_a_ranking_rule_lists_its_lots_in_the_order_it_picked_them():
+    """LTFO reaches for the cheaper-looking short-term lot first, so that is the
+    order the table and the reasoning have to appear in."""
+    assert [s.lot_id for s in plan("edge_case", "ltfo").lot_sales] == ["L2", "L1"]
+    assert [s.lot_id for s in plan("edge_case", "fifo").lot_sales] == ["L1", "L2"]
+    first = plan("edge_case", "ltfo").lot_sales[0]
+    assert first.reason.startswith("1st pick for ACME: the lowest statutory tax")
 
 
 def test_nothing_in_the_rendered_text_claims_the_plan_has_been_executed():
@@ -191,3 +209,4 @@ def test_prettify_only_swaps_the_currency_prefix():
 
 def test_demo_date_is_shared_with_the_api_rather_than_copied():
     assert ui.DEMO_SALE_DATE is DEMO_SALE_DATE
+

@@ -27,7 +27,7 @@ from .portfolio import Position
 
 @dataclass(frozen=True)
 class _Setup:
-    """Method-independent work, done once so the FIFO comparison need not repeat it."""
+    """Method-independent work, done once so the other methods need not repeat it."""
 
     positions: dict[str, Position]
     total_value: float
@@ -98,7 +98,9 @@ class Engine:
         s = self._setup()
         allocation = optimizer.solve(s.priced, s.requirements, self.cfg, method)
 
-        sales = explain.lot_sales(s.priced, allocation.shares, self.cfg, self.sale_date)
+        sales = explain.lot_sales(
+            s.priced, allocation.shares, self.cfg, self.sale_date, allocation.method
+        )
         breakdown = tax.breakdown(s.priced, allocation.shares, self.cfg)
 
         sold: dict[str, int] = {}
@@ -184,7 +186,7 @@ class Engine:
             f"Tax on this plan: Rs {breakdown.total_tax:,.2f}.",
             self._comparison_line(plan),
             explain.setoff_summary(breakdown, self.cfg),
-            explain.optimality_note(plan.lot_sales),
+            explain.optimality_note(plan.lot_sales, plan.certified_optimal),
         ]
         if plan.summary.cash_left_over > 0.005:
             lines.append(

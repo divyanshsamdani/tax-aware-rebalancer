@@ -53,9 +53,9 @@ def _alternatives(
         if delta > 0:
             verdict = f"would cost Rs {delta:,.2f} more in tax"
         elif delta < 0:
-            verdict = f"would save Rs {-delta:,.2f} - this plan is not optimal"
+            verdict = f"would save Rs {-delta:,.2f}, so this plan is not optimal"
         else:
-            verdict = "costs exactly the same in tax"
+            verdict = "costs exactly the same"
         out.append(
             Alternative(
                 lot_id=other.lot.lot_id,
@@ -65,10 +65,8 @@ def _alternatives(
                 shares=n,
                 tax_delta=delta,
                 note=(
-                    f"selling {n} share(s) from lot {other.lot.lot_id} instead "
-                    f"(bought {other.lot.buy_date}, {other.classification}, "
-                    f"{'loss' if other.gain_per_share < 0 else 'gain'} of Rs "
-                    f"{abs(other.gain_per_share):,.2f}/share) {verdict}"
+                    f"moving {n} share{'' if n == 1 else 's'} to lot "
+                    f"{other.lot.lot_id} ({other.classification}) {verdict}"
                 ),
             )
         )
@@ -76,44 +74,91 @@ def _alternatives(
     return out[:_MAX_ALTERNATIVES]
 
 
-def _rate_sentence(bucket: str, rate: float, is_loss: bool, cfg: TaxConfig) -> str:
-    """The marginal rate, worded as a cost for a gain and a saving for a loss."""
-    side = _BUCKET_NAME[bucket]
-    zero = abs(rate) < 1e-9
+def statutory_per_share(lot: PricedLot, cfg: TaxConfig) -> float:
+    """Gain per share at the lot's own statutory rate: what LTFO ranks on."""
+    return lot.gain_per_share * (cfg.stcg_rate if lot.bucket == "ST" else cfg.ltcg_rate)
 
-    if is_loss:
-        if zero and bucket == "LT":
-            why = (
-                f"the Rs {cfg.ltcg_exemption:,.0f} exemption already covers the "
-                "long-term gain, so this loss saves nothing this year"
-            )
-        elif zero:
-            why = "there is no realised gain left for it to cancel"
-        elif bucket == "LT":
-            why = "it cancels long-term gain that sits above the exemption"
-        elif abs(rate - cfg.ltcg_rate) < 1e-9:
-            why = (
-                "no short-term gain is left, so it carries over to the long-term "
-                "side where the rate is lower"
-            )
-        else:
-            why = "it cancels short-term gain, which is taxed at the higher rate"
-        return f"Each rupee of this loss saves {rate:.2%}, because {why}."
 
-    if zero and bucket == "LT":
-        why = f"the Rs {cfg.ltcg_exemption:,.0f} long-term exemption is not yet used up"
-    elif zero:
-        why = "realised losses still absorb it completely"
-    elif bucket == "LT":
-        why = "the exemption has been used up"
-    elif abs(rate - cfg.ltcg_rate) < 1e-9:
-        why = (
-            "short-term losses absorb it and the surplus carries over to the "
-            "long-term side, where the rate is lower"
+def pick_order(
+    lots: Sequence[PricedLot], shares: Sequence[int], method: str, cfg: TaxConfig
+) -> list[int]:
+    """The sold lots, in the order the method actually reached for them.
+
+    A ranking rule works through a ticker's lots in a fixed sequence, so listing
+    them that way is part of showing the rule. `optimal` has no such sequence -
+    it settles every quantity at once - so its lots stay in portfolio order.
+    """
+    chosen = [i for i, n in enumerate(shares) if n > 0]
+    if method == "fifo":
+        return sorted(chosen, key=lambda i: (lots[i].lot.ticker, lots[i].lot.buy_date))
+    if method == "ltfo":
+        return sorted(
+            chosen,
+            key=lambda i: (
+                lots[i].lot.ticker,
+                statutory_per_share(lots[i], cfg),
+                lots[i].lot.buy_date,
+            ),
         )
+    return chosen
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 11 <= n % 100 <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def _rule_clause(lot: PricedLot, method: str, cfg: TaxConfig, pick: int) -> str:
+    """Why this method reached for this lot, at this point in its sequence.
+
+    `optimal` has no per-lot rule to quote: it chooses every quantity jointly
+    across the portfolio, so its justification is the priced swap that follows.
+    """
+    ticker = lot.lot.ticker
+    if method == "fifo":
+        return f"{_ordinal(pick)} pick for {ticker}: the oldest lot still available."
+    if method == "ltfo":
+        return (
+            f"{_ordinal(pick)} pick for {ticker}: the lowest statutory tax per share "
+            f"of the lots still available, at Rs {statutory_per_share(lot, cfg):,.2f}."
+        )
+    return ""
+
+
+def _fill_clause(
+    lot: PricedLot, n: int, required: int, before: int, pick: int, sequential: bool
+) -> str:
+    """How much of the ticker's requirement this lot covers, and what is left.
+
+    The brief turns on exactly this: a lot is emptied, the quantity still needed
+    spills into the next one, and the shares beyond that stay put. A rule works
+    through its lots in sequence, so after the first pick it counts against what
+    was still outstanding rather than against the original total. The solver
+    settles every quantity at once and has no sequence to count along.
+    """
+    ticker, quantity = lot.lot.ticker, lot.lot.quantity
+    left, after = quantity - n, before - n
+    usage = (
+        "taking the whole lot"
+        if n == quantity
+        else f"{n} of its {quantity}, leaving {left} untouched"
+    )
+
+    if sequential and pick > 1 and after == 0:
+        return (
+            f"Covers the remaining {n}, taking the whole lot."
+            if n == quantity
+            else f"Covers the remaining {n} from its {quantity}, leaving {left} untouched."
+        )
+    if sequential and pick > 1:
+        head = f"Supplies {n} of the {before} still outstanding"
+    elif n == required:
+        head = f"Supplies all {required} shares {ticker} must give up"
     else:
-        why = "there is no realised loss left to absorb it"
-    return f"One more rupee of {side} gain would cost {rate:.2%}, because {why}."
+        head = f"Supplies {n} of the {required} shares {ticker} must give up"
+
+    spill = f"; {after} still to find from the next lot" if sequential and after else ""
+    return f"{head}, {usage}{spill}."
 
 
 def lot_sales(
@@ -121,52 +166,47 @@ def lot_sales(
     shares: Sequence[int],
     cfg: TaxConfig,
     sale_date: date,
+    method: str = "optimal",
 ) -> list[LotSale]:
-    """One record per lot the plan sells, with its reasoning attached."""
-    net_st, net_lt = aggregates(lots, shares)
-    out: list[LotSale] = []
+    """One record per lot the plan sells, with its reasoning attached.
 
-    for i, lot in enumerate(lots):
+    The prose carries only what the structured fields cannot: why this method
+    reached for this lot, what the next rupee actually costs as against the
+    statutory rate, and the priced cost of having chosen differently.
+    """
+    net_st, net_lt = aggregates(lots, shares)
+    required: dict[str, int] = {}
+    for lot, n in zip(lots, shares):
+        required[lot.lot.ticker] = required.get(lot.lot.ticker, 0) + n
+
+    out: list[LotSale] = []
+    picks: dict[str, int] = {}
+    outstanding: dict[str, int] = {}
+    sequential = method in ("fifo", "ltfo")
+
+    for i in pick_order(lots, shares, method, cfg):
+        lot = lots[i]
         n = shares[i]
-        if n <= 0:
-            continue
+        ticker = lot.lot.ticker
+        picks[ticker] = picks.get(ticker, 0) + 1
+        before = outstanding.get(ticker, required[ticker])
+        outstanding[ticker] = before - n
         rate = effective_rate(net_st, net_lt, lot.bucket, cfg)
         realized = lot.gain_per_share * n
         left = lot.lot.quantity - n
         alternatives = _alternatives(lots, shares, i, cfg)
 
-        is_loss = lot.gain_per_share < 0
-        movement = (
-            f"a loss of Rs {abs(lot.gain_per_share):,.2f}/share, "
-            f"Rs {abs(realized):,.2f} in all"
-            if is_loss
-            else f"a gain of Rs {lot.gain_per_share:,.2f}/share, "
-            f"Rs {realized:,.2f} in all"
-        )
-        text = (
-            f"{lot.lot.ticker}: sell {n} of {lot.lot.quantity} shares from the lot "
-            f"bought {lot.lot.buy_date} - "
-            f"{holding_label(lot.lot.buy_date, sale_date)}, "
-            f"{_BUCKET_NAME[lot.bucket]}, {lot.classification}. "
-            f"Cost Rs {lot.lot.buy_price:,.2f}/share against Rs {lot.price:,.2f} "
-            f"today, so {movement}. "
-            f"{_rate_sentence(lot.bucket, rate, is_loss, cfg)}"
-        )
-        if alternatives:
+        parts = [
+            _rule_clause(lot, method, cfg, picks[ticker]),
+            _fill_clause(lot, n, required[ticker], before, picks[ticker], sequential),
+        ]
+        # Only a plan that weighed alternatives should be judged against one. A
+        # ranking rule never considered the swap, so "this plan is not optimal"
+        # answers a question it never asked; the plan comparison says it better.
+        if alternatives and method == "optimal":
             best = alternatives[0].note
-            text += " " + best[0].upper() + best[1:] + "."
-        elif sum(1 for o in lots if o.lot.ticker == lot.lot.ticker) == 1:
-            text += " This is the only lot held in this ticker, so the choice was forced."
-        else:
-            text += (
-                " Every other lot of this ticker is already fully committed in this "
-                "plan, so there are no spare shares to swap for these."
-            )
-        if left > 0:
-            text += (
-                f" The remaining {left} shares stay untouched and keep their "
-                f"original buy date of {lot.lot.buy_date}."
-            )
+            parts.append(best[0].upper() + best[1:] + ".")
+        text = " ".join(p for p in parts if p)
 
         out.append(
             LotSale(
@@ -217,18 +257,30 @@ def setoff_summary(tax: TaxBreakdown, cfg: TaxConfig) -> str:
     )
 
 
-def optimality_note(sales: Sequence[LotSale]) -> str:
-    """What the table of alternatives actually proves."""
+def optimality_note(sales: Sequence[LotSale], certified: bool = True) -> str:
+    """What the table of alternatives actually proves.
+
+    Surviving every single-lot swap is a local check. For the solver's plan it
+    corroborates a guarantee that already exists; for a ranking rule it proves
+    nothing at all, because the cheaper plan may be several shares away in two
+    lots at once - which is exactly how LTFO loses on `loss_priority`.
+    """
     swaps = [a for s in sales for a in s.alternatives]
     if not swaps:
         return "No substitution was possible: the plan is forced."
     cheapest = min(a.tax_delta for a in swaps)
     if cheapest < -1e-6:
         return (
-            f"Warning: a single swap would save Rs {-cheapest:,.2f}, so this plan "
-            "is not optimal."
+            f"A single swap would save Rs {-cheapest:,.2f}, so this plan is not "
+            "optimal."
+        )
+    if certified:
+        return (
+            f"Checked {len(swaps)} alternative lot substitution(s); every one costs "
+            "the same or more, which corroborates the solver's guarantee."
         )
     return (
-        f"Checked {len(swaps)} alternative lot substitution(s); every one costs the "
-        "same or more, which is what makes this plan the cheapest available."
+        f"Checked {len(swaps)} alternative lot substitution(s) and none is cheaper, "
+        "but that is not a proof: a cheaper plan can lie several shares away across "
+        "two lots at once. Only the solver's plan carries a guarantee."
     )

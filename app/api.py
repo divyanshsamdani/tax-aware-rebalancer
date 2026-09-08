@@ -151,7 +151,7 @@ def health() -> dict:
 
 @app.get("/demo/{scenario}", response_model=PlanResponse, tags=["demo"])
 def demo(scenario: Scenario) -> dict:
-    """Run one of the four bundled scenarios. No input needed.
+    """Run one of the bundled scenarios. No input needed.
 
     `edge_case` is the one the assignment requires: 60 long-term ACME shares and
     40 short-term ones, 75 must go, so the long-term lot goes whole and 15 shares
