@@ -10,13 +10,10 @@ program with whole-number variables:
                 sum of x over ticker T's lots = shares required from T
                 0 <= x_i <= lot_i.quantity,  x_i a whole number
 
-`t` stands in for the tax. You cannot write max(...) in a linear objective, so
-force one extra variable above all four formulas and minimise it: it settles on
-whichever formula is largest, which is exactly the tax. HiGHS then returns a
-proved global optimum. Whole numbers matter rather than being a detail - the
-best answer routinely lands part-way through a lot, where the exemption runs
-out. tests/test_optimizer.py carries the counterexamples that rule out scoring
-rules, lot orderings and ticker-by-ticker decomposition.
+`t` stands in for the tax: you cannot write max(...) in a linear objective, so
+force one extra variable above all four formulas and minimise it. HiGHS returns
+a proved global optimum. Whole numbers are not a detail - the best answer often
+lands part-way through a lot, where the exemption runs out.
 """
 
 from __future__ import annotations
@@ -29,8 +26,7 @@ from .tax import aggregates, tax_on, tax_pieces
 
 Method = Literal["optimal", "fifo", "ltfo"]
 
-# Big enough to absorb the solver's own rounding, far too small to buy a
-# meaningfully worse plan.
+# Big enough to absorb the solver's rounding, too small to buy a worse plan.
 TIE_BREAK_TOLERANCE = 1e-6
 
 
@@ -70,12 +66,12 @@ def _validate(lots: Sequence[PricedLot], reqs: Sequence[SellRequirement]) -> Non
 def solve_optimal(
     lots: Sequence[PricedLot], reqs: Sequence[SellRequirement], cfg: TaxConfig
 ) -> Allocation:
-    """The cheapest legal allocation, solved in two passes.
+    """The cheapest legal allocation, in two passes: minimise tax, then re-solve
+    with the tax pinned there and break ties by leaving unrealised gains alone.
 
-    Pass one minimises tax; pass two re-solves with the tax pinned there and
-    breaks ties by leaving unrealised gains alone. A separate pass rather than a
-    weighted objective, because a weight big enough to break ties on a portfolio
-    worth lakhs could also override a genuine difference of a few rupees.
+    A second pass rather than a weighted objective, because a tie-break weight
+    big enough to matter on a portfolio worth lakhs could also override a real
+    difference of a few rupees.
     """
     import numpy as np
     from scipy.optimize import Bounds, LinearConstraint, milp
@@ -150,8 +146,8 @@ def solve_optimal(
 def solve_fifo(
     lots: Sequence[PricedLot], reqs: Sequence[SellRequirement], cfg: TaxConfig
 ) -> Allocation:
-    """Oldest lot first: the FIFO baseline, and what a demat account does by
-    default, so the gap against it is what picking lots is worth."""
+    """Oldest lot first: what a demat account does by default, so the gap
+    against it is what picking lots is worth."""
     _validate(lots, reqs)
     index = lots_by_ticker(lots)
     shares = [0] * len(lots)
@@ -170,12 +166,10 @@ def solve_ltfo(
     lots: Sequence[PricedLot], reqs: Sequence[SellRequirement], cfg: TaxConfig
 ) -> Allocation:
     """Least tax first out: per ticker, fill from the lot with the smallest
-    gain_per_share * statutory rate for its bucket.
+    gain_per_share * statutory rate. Ties break on the older lot.
 
-    The strongest of the simple ranking rules, and the one a reviewer is most
-    likely to reach for. It still cannot see that the exemption is a single pool
-    shared across the whole portfolio, so it prices every lot in isolation and
-    carries no optimality guarantee. Ties break on the older lot.
+    It prices each lot in isolation, so it cannot see that the exemption is one
+    pool shared across the portfolio. No optimality guarantee.
     """
     _validate(lots, reqs)
     index = lots_by_ticker(lots)

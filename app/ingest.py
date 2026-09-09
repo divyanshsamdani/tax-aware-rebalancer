@@ -1,9 +1,8 @@
 """Reading the three input CSVs: lots, prices and target weights.
 
-One rule throughout: never guess. A bad quantity, an unreadable date or a
-missing column stops the run naming the file, the row and the offending value,
-because a silently dropped lot changes the tax answer and nothing downstream
-could tell that it happened.
+Never guess. A bad quantity, an unreadable date or a missing column stops the
+run naming the file, the row and the value, because a silently dropped lot
+changes the tax answer and nothing downstream could tell that it happened.
 """
 
 from __future__ import annotations
@@ -71,8 +70,7 @@ def _ticker(source: str, line: int, row: Mapping[str, str]) -> str:
 
 
 def parse_date(value: str, label: str = "date") -> date:
-    """The only place a date string becomes a date, shared with the API form fields
-    so the accepted formats cannot drift apart."""
+    """Shared with the API form fields so the accepted formats cannot drift."""
     for fmt in DATE_FORMATS:
         try:
             return datetime.strptime(value.strip(), fmt).date()
@@ -113,7 +111,7 @@ def _whole(source: str, line: int, row: Mapping[str, str], column: str) -> int:
 
 
 def default_lot_id(ticker: str, n: int) -> str:
-    """A missing id is filled in from file order, not randomly: it is the audit trail."""
+    """Filled in from file order, not randomly: the id is the audit trail."""
     return f"{ticker}-{n}"
 
 
@@ -160,8 +158,8 @@ def parse_prices(text: str, source: str = "prices.csv") -> dict[str, float]:
 
 
 def parse_targets(text: str, source: str = "targets.csv") -> dict[str, float]:
-    """Columns: ticker, target_weight_pct. Percent in, fractions out, converted here
-    once so nothing downstream has to know which convention it holds."""
+    """Columns: ticker, target_weight_pct. Percent in, fractions out, so nothing
+    downstream has to know which convention it holds."""
     targets: dict[str, float] = {}
     seen: dict[str, int] = {}
     for line, row in _rows(text, source, TARGET_COLUMNS):
@@ -183,8 +181,8 @@ def parse_targets(text: str, source: str = "targets.csv") -> dict[str, float]:
 
 
 def decode(raw: bytes, source: str) -> str:
-    """utf-8-sig strips the byte-order mark Excel writes, which would otherwise make
-    the first column name read as missing."""
+    """utf-8-sig strips the byte-order mark Excel writes, which would otherwise
+    make the first column name read as missing."""
     try:
         return raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:

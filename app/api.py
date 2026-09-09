@@ -1,7 +1,6 @@
-"""The HTTP layer. It parses input, calls `Engine`, and returns the plan.
-
-The response shapes are the engine's own types, so there is no second copy of
-the data model to keep in step. Start at GET /demo/edge_case, or /docs.
+"""The HTTP layer: parse input, call `Engine`, return the plan. The response
+shapes are the engine's own types, so there is no second data model to keep in
+step. Start at GET /demo/edge_case, or /docs.
 """
 
 from __future__ import annotations
@@ -151,12 +150,9 @@ def health() -> dict:
 
 @app.get("/demo/{scenario}", response_model=PlanResponse, tags=["demo"])
 def demo(scenario: Scenario) -> dict:
-    """Run one of the bundled scenarios. No input needed.
-
-    `edge_case` is the one the assignment requires: 60 long-term ACME shares and
-    40 short-term ones, 75 must go, so the long-term lot goes whole and 15 shares
-    spill into the short-term lot, leaving 25 with their original buy date.
-    """
+    """Run one of the bundled scenarios. No input needed. `edge_case` is the one
+    the brief requires: 60 long-term ACME shares and 40 short-term, 75 must go,
+    so the long-term lot goes whole and 15 spill into the short-term one."""
     lots, prices, targets = ingest.load_scenario(SAMPLES / scenario)
     engine = Engine(lots, prices, targets, sale_date=DEMO_SALE_DATE)
     return _respond(engine, engine.run("optimal"))

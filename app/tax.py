@@ -27,13 +27,12 @@ def add_months(d: date, months: int) -> date:
 
 
 def classify(buy_date: date, sale_date: date, cfg: TaxConfig) -> Bucket:
-    """Long-term only if held MORE than 12 months. Calendar months, not 365 days:
-    the anniversary itself is still short-term."""
+    """Long-term only if held MORE than 12 months, so the anniversary itself is
+    still short-term. Calendar months, not 365 days."""
     return "LT" if sale_date > add_months(buy_date, cfg.long_term_months) else "ST"
 
 
 def months_held(buy_date: date, sale_date: date) -> int:
-    """Whole calendar months between two dates, matching `classify`."""
     m = (sale_date.year - buy_date.year) * 12 + (sale_date.month - buy_date.month)
     if sale_date < add_months(buy_date, m):
         m -= 1
@@ -49,7 +48,6 @@ def holding_period(buy_date: date, sale_date: date) -> str:
 
 
 def holding_label(buy_date: date, sale_date: date) -> str:
-    """The prose form, for a sentence: '14 months held'."""
     return f"{holding_period(buy_date, sale_date)} held"
 
 
@@ -74,10 +72,8 @@ def tax_on(net_st: float, net_lt: float, cfg: TaxConfig) -> float:
 
 
 def effective_rate(net_st: float, net_lt: float, bucket: Bucket, cfg: TaxConfig) -> float:
-    """What one more rupee of gain on this side costs in this plan.
-
-    Not the statutory rate: it depends on how much exemption and loss are left.
-    """
+    """What one more rupee of gain on this side costs in this plan. Not the
+    statutory rate: it depends on how much exemption and loss are left."""
     before = tax_on(net_st, net_lt, cfg)
     if bucket == "ST":
         return tax_on(net_st + 1.0, net_lt, cfg) - before

@@ -1,10 +1,8 @@
 """An exhaustive reference solver, used only by the tests.
 
-It tries every possible way of splitting each ticker's required sale across that
-ticker's lots and keeps the cheapest. The cost grows exponentially, so it is
-useless in production - but it shares no logic with the linear program, which is
-the point. When the two agree on hundreds of random portfolios, that is real
-evidence rather than the same idea agreeing with itself.
+It tries every way of splitting each ticker's required sale across that ticker's
+lots and keeps the cheapest. Exponential, so useless in production - but it
+shares no logic with the linear program, which is the point.
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ def solve_bruteforce(
     lots: Sequence[PricedLot], reqs: Sequence[SellRequirement], cfg: TaxConfig
 ) -> Allocation:
     index = lots_by_ticker(lots)
-
     per_ticker = [
         [(index[r.ticker], s) for s in splits(
             [lots[i].lot.quantity for i in index[r.ticker]], r.shares

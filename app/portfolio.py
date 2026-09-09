@@ -1,8 +1,8 @@
 """Turning target weights into share counts. No tax logic here.
 
-How many shares of a ticker must be sold depends only on its price and its
-target weight, never on what was paid for it, so the quantities can be fixed
-first and "which lots supply them" becomes a self-contained problem.
+How many shares of a ticker must be sold depends only on its price and target
+weight, never on what was paid for it, so the quantities can be fixed first and
+"which lots supply them" becomes a self-contained problem.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ WEIGHT_TOLERANCE = 1e-4
 
 def round_half_up(x: float) -> int:
     """Nearest whole share, halves away from zero. Built-in round() is banker's
-    rounding, which sends 0.5 to 0 - not what "nearest share" means."""
+    rounding, which sends 0.5 to 0."""
     return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
 
 
@@ -86,10 +86,8 @@ def buy_plan(
     proceeds: float,
 ) -> dict[str, int]:
     """Whole-share buys for underweight tickers, paid out of the proceeds.
-
-    Sold tickers are skipped - the sale already put them at target. Largest
-    shortfall first, capped by cash on hand, so the plan pays for itself.
-    """
+    Largest shortfall first, capped by cash on hand, so the plan pays for
+    itself. Sold tickers are skipped: the sale already put them at target."""
     shortfalls = {
         ticker: targets.get(ticker, 0.0) * total_value - p.value
         for ticker, p in pos.items()
