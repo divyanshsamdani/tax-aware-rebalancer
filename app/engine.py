@@ -27,7 +27,7 @@ from .portfolio import Position
 
 @dataclass(frozen=True)
 class _Setup:
-    """Method-independent work, done once so the other methods need not repeat it."""
+    """Method-independent work, done once and shared by all three methods."""
 
     positions: dict[str, Position]
     total_value: float
@@ -152,8 +152,8 @@ class Engine:
     def _weights(
         self, sold: Mapping[str, int], buys: Mapping[str, int], cash: float
     ) -> list[WeightRow]:
-        """Weights before and after, against the same total. Undeployed proceeds stay
-        in the denominator as cash, so the "after" column is honest about rounding."""
+        """Undeployed proceeds stay in the denominator as cash, so the "after"
+        column is honest about what whole-share rounding left behind."""
         s = self._setup()
         before = portfolio.weights(s.positions)
         after_positions = {
@@ -175,8 +175,7 @@ class Engine:
         if not plan.trades:
             return [
                 "Every ticker is already at its target weight to within one whole "
-                "share, so there are no trades, no realised gains and no tax.",
-                self._comparison_line(plan),
+                "share, so there are no trades, no realised gains and no tax."
             ]
 
         lines = [
@@ -202,13 +201,11 @@ class Engine:
         return [line for line in lines if line]
 
     def _comparison_line(self, plan: Plan) -> str:
-        """The FIFO comparison in words. A bare saving of zero reads as "picking lots
-        achieved nothing" when it means FIFO was optimal here and was proved so."""
+        """The FIFO comparison in words. Skipped when FIFO is the plan, since that
+        would be comparing it against itself."""
         fifo = plan.summary.tax_if_fifo
-        if fifo is None:
+        if fifo is None or plan.method == "fifo":
             return ""
-        if not plan.trades:
-            return "No sale is required, so every lot-selection method costs nothing."
         mine = plan.summary.total_tax
         if fifo - mine > 0.005:
             return (
@@ -216,7 +213,14 @@ class Engine:
                 f"Rs {fifo:,.2f} selling oldest-first, a saving of "
                 f"Rs {fifo - mine:,.2f}."
             )
-        return (
-            f"Selling oldest-first reaches the same figure here, Rs {mine:,.2f}. "
-            "That is a result the engine proved, not one it assumed."
+        if mine - fifo > 0.005:
+            return (
+                f"This plan costs Rs {mine:,.2f} against Rs {fifo:,.2f} selling "
+                f"oldest-first, so it is Rs {mine - fifo:,.2f} worse."
+            )
+        proved = (
+            " The solver proved no split is cheaper."
+            if plan.method == "optimal"
+            else ""
         )
+        return f"Selling oldest-first reaches the same figure, Rs {mine:,.2f}.{proved}"

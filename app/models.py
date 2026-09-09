@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Literal
+from typing import Literal, Optional
 
 # "ST" = short-term, "LT" = long-term.
 Bucket = Literal["ST", "LT"]
@@ -12,15 +12,9 @@ Bucket = Literal["ST", "LT"]
 
 @dataclass(frozen=True)
 class TaxConfig:
-    """Capital gains rates for listed Indian equity on which STT is paid.
-
-    Set by the Finance (No. 2) Act 2024 for transfers on or after 23 July 2024
-    and unchanged since: short-term 20% (s.111A), long-term 12.5% on the amount
-    above Rs 1,25,000 a year (s.112A). Source: Income Tax Department,
-    https://incometaxindia.gov.in/
-
-    A dataclass rather than module constants so a test can vary a rate.
-    """
+    """Listed Indian equity on which STT is paid. Finance (No. 2) Act 2024, for
+    transfers on or after 23 July 2024: short-term 20% (s.111A), long-term 12.5%
+    above Rs 1,25,000 a year (s.112A). Source: https://incometaxindia.gov.in/"""
 
     stcg_rate: float = 0.20
     ltcg_rate: float = 0.125
@@ -30,8 +24,8 @@ class TaxConfig:
 
 @dataclass(frozen=True)
 class Lot:
-    """One purchase tranche. Frozen on purpose: a partial sale must leave the
-    original lot and its buy date intact, so it produces a remainder instead."""
+    """One purchase tranche. Frozen, so a partial sale cannot mutate the buy
+    date the remaining shares still need."""
 
     lot_id: str
     ticker: str
@@ -48,7 +42,7 @@ class Lot:
 
 @dataclass(frozen=True)
 class PricedLot:
-    """A lot valued at today's price: what the optimiser actually works with."""
+    """A lot valued at today's price: what the optimiser works with."""
 
     lot: Lot
     bucket: Bucket
@@ -73,6 +67,31 @@ class SellRequirement:
 
 
 @dataclass(frozen=True)
+class SwapLine:
+    """One term of an alternative's cost: how much gain or relief moves, and at
+    what rate. The lines sum to `Alternative.extra_tax` exactly."""
+
+    change: str
+    rate: float
+    tax_effect: float  # signed; positive adds tax
+
+
+@dataclass
+class Alternative:
+    """The cheapest single-share change to a partly-sold lot's quantity.
+
+    `lines` is the ledger; `note` carries the qualitative reasons instead on the
+    rare input where the ledger will not reconcile.
+    """
+
+    lot_id: str
+    sells_one: Literal["fewer", "more"]
+    extra_tax: float
+    lines: list[SwapLine] = field(default_factory=list)
+    note: str = ""
+
+
+@dataclass(frozen=True)
 class LotSale:
     """One sell recommendation, with the reasoning behind it."""
 
@@ -90,6 +109,7 @@ class LotSale:
     realized_gain: float
     marginal_tax_rate: float  # what the next rupee costs; see tax.effective_rate
     reason: str
+    alternative: Optional[Alternative] = None
 
 
 @dataclass
