@@ -5,4 +5,4 @@ CLAUDE.md
 .pytest_cache/
 __pycache__/
 *.pyc
-assignment.pdf
+*.pdf

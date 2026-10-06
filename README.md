@@ -20,7 +20,7 @@ Then pick a way in. Nothing is installed as a package and there is no build step
 
 ```bash
 uv run streamlit run ui.py     # the UI, on http://localhost:8501
-uv run uvicorn app.api:app     # the API: /docs for Swagger, /demo/edge_case for the brief's case
+uv run uvicorn app.api:app     # the API: /docs for Swagger, /demo/edge_case for the spec's case
 uv run pytest                  # the tests
 ```
 
@@ -40,7 +40,7 @@ Listed equity on which STT is paid. Source: the Income Tax Department,
 **Finance (No. 2) Act 2024** set these for transfers on or after **23 July 2024**
 — short-term 15% → 20%, long-term 10% → 12.5%, exemption ₹1,00,000 → ₹1,25,000.
 
-> The brief quotes a ₹1 lakh exemption, which is the pre-23-July-2024 figure.
+> The spec quotes a ₹1 lakh exemption, which is the pre-23-July-2024 figure.
 > This engine uses ₹1,25,000. Every rate lives in `TaxConfig` in `app/models.py`.
 
 ---
@@ -301,12 +301,12 @@ uv run pytest
 |---|---|
 | `test_tax.py` | holding periods, the four-line identity against the step-by-step calculation, set-off order |
 | `test_optimizer.py` | the solver against exhaustive search on 60 random portfolios, 60 more against FIFO, plus the counterexamples that rule out simpler rules |
-| `test_engine.py` | the three cases the brief requires, the loss-and-exemption splits, rebalancing mechanics, validation, the per-lot reasoning and its ledger |
+| `test_engine.py` | the three cases the spec requires, the loss-and-exemption splits, rebalancing mechanics, validation, the per-lot reasoning and its ledger |
 | `test_ingest.py` | CSV parsing and the error messages |
 | `test_api.py` | every endpoint, both input paths, the error contract |
 | `test_ui.py` | the front end's data path |
 
-The three the brief asks for are the first three sections of `test_engine.py`:
+The three the spec asks for are the first three sections of `test_engine.py`:
 the partial-lot edge case, a straightforward all-long-term rebalance, and a
 portfolio already at target.
 

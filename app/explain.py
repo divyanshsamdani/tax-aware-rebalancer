@@ -150,7 +150,7 @@ def _fill_clause(
 ) -> str:
     """How much of the ticker's requirement this lot covers, and what is left.
 
-    The brief turns on exactly this: a lot is emptied, the quantity still needed
+    The spec turns on exactly this: a lot is emptied, the quantity still needed
     spills into the next one, and the shares beyond that stay put. A sequential
     rule counts against what was still outstanding after its first pick.
     """

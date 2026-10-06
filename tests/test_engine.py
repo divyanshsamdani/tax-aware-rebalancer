@@ -1,4 +1,4 @@
-"""End to end. The three cases the brief asks for come first."""
+"""End to end. The three cases the spec asks for come first."""
 
 from __future__ import annotations
 
@@ -222,7 +222,7 @@ def test_each_method_explains_itself_in_its_own_terms():
 
 
 def test_the_reasoning_shows_the_fill_spilling_into_the_next_lot():
-    """The mechanic the brief turns on: a lot is emptied, the shortfall spills
+    """The mechanic the spec turns on: a lot is emptied, the shortfall spills
     into the next lot, and the shares beyond that stay put."""
     plan = run("edge_case", "fifo")
     by_id = {s.lot_id: s for s in plan.lot_sales}
